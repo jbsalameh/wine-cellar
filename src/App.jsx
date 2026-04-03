@@ -7,12 +7,24 @@ const STORAGE_KEY = "ma_cave_v2";
 function loadCellar() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Mirror to sessionStorage so data survives within the tab even if localStorage is cleared
+      try { sessionStorage.setItem(STORAGE_KEY, raw); } catch {}
+      return parsed;
+    }
+  } catch {}
+  // localStorage unavailable or empty — try sessionStorage fallback (same tab)
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
   return null;
 }
 function saveCellar(cellar) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cellar)); } catch {}
+  const json = JSON.stringify(cellar);
+  try { localStorage.setItem(STORAGE_KEY, json); } catch {}
+  try { sessionStorage.setItem(STORAGE_KEY, json); } catch {}
 }
 
 // ── Sample data ───────────────────────────────────────────────────────────────
@@ -767,6 +779,19 @@ function Toast({ toast, onDismiss }) {
   );
 }
 
+// ── Share encode/decode (Unicode-safe base64) ─────────────────────────────────
+function encodeShare(cellar) {
+  // Strip consumption logs so the URL stays short
+  const stripped = cellar.map(({ log, ...w }) => w);
+  const json = JSON.stringify(stripped);
+  return btoa(encodeURIComponent(json).replace(/%([0-9A-F]{2})/g, (_, p) => String.fromCharCode(parseInt(p, 16))));
+}
+function decodeShare(encoded) {
+  return JSON.parse(decodeURIComponent(
+    Array.from(atob(encoded)).map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+  ));
+}
+
 // ── Export / Import helpers ────────────────────────────────────────────────────
 const CSV_HEADERS = ["name","year","region","appellation","type","grape","quantity","drinkFrom","drinkUntil","rating","notes"];
 
@@ -852,11 +877,60 @@ export default function WineCellar() {
   const [tonightError, setTonightError] = useState("");
   const [showLog, setShowLog] = useState(false);
   const [pendingConsume, setPendingConsume] = useState(null);
+  const [shareMode, setShareMode] = useState(false);
 
-  useEffect(() => { saveCellar(cellar); }, [cellar]);
+  // On mount: warn if localStorage is unavailable (private mode) or was cleared (iOS ITP)
+  useEffect(() => {
+    try {
+      localStorage.setItem('__test__', '1');
+      localStorage.removeItem('__test__');
+    } catch {
+      showToast("⚠️ Stockage indisponible (mode privé ?) — vos données ne seront pas sauvegardées");
+      return;
+    }
+    // iOS Safari clears localStorage after 7 days of inactivity; remind users to export
+    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+    if (isIOS && !sessionStorage.getItem('ios_warned')) {
+      sessionStorage.setItem('ios_warned', '1');
+      setTimeout(() => showToast("💡 iPhone : exportez votre cave (⋯) pour éviter toute perte de données"), 1500);
+    }
+  }, []);
+
+  // On mount: check URL hash for a shared cellar
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith('#share=')) return;
+    try {
+      const data = decodeShare(hash.slice(7));
+      if (Array.isArray(data) && data.length > 0) {
+        setCellar(data.map((w, i) => ({ ...w, id: w.id ?? Date.now() + i })));
+        setShareMode(true);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => { if (!shareMode) saveCellar(cellar); }, [cellar, shareMode]);
 
   function showToast(message, undo) {
     setToast({ message, undo });
+  }
+
+  function copyShareURL() {
+    const encoded = encodeShare(cellar);
+    const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
+    navigator.clipboard.writeText(url)
+      .then(() => showToast("🔗 Lien copié dans le presse-papiers ✓"))
+      .catch(() => showToast("Impossible de copier — essayez d'exporter en JSON"));
+  }
+
+  function importSharedCellar() {
+    const owned = loadCellar();
+    const merged = owned ? [...owned, ...cellar.filter(s => !owned.some(o => o.id === s.id))] : cellar;
+    saveCellar(merged);
+    setCellar(merged);
+    setShareMode(false);
+    window.location.hash = "";
+    showToast(`${cellar.length} vins importés dans votre cave ✓`);
   }
 
   const regions = ["Tous", ...Array.from(new Set(cellar.map(w => w.region))).sort()];
@@ -1080,6 +1154,7 @@ Instructions :
         @media(max-width:600px){.top-nav{display:none!important}main{padding-bottom:76px!important}.bottom-nav{display:flex!important}}
         .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #EAE5DF;z-index:200;justify-content:space-around;align-items:stretch;padding-bottom:env(safe-area-inset-bottom,0px)}
         a{color:inherit}
+        @media print{.no-print,.bottom-nav,footer{display:none!important}.top-nav{display:none!important}header{position:relative!important}main{padding:8px!important;max-width:100%!important}body,#root>div{background:#fff!important}.wcard{break-inside:avoid;box-shadow:none!important}@page{margin:1.5cm;size:A4 portrait}}
       `}</style>
 
       {showLog && pendingConsume && (
@@ -1095,6 +1170,19 @@ Instructions :
       }} />}
       <Toast toast={toast} onDismiss={() => setToast(null)} />
       {showEdit && selected && <EditModal wine={selected} onSave={updateWine} onClose={() => setShowEdit(false)} />}
+
+      {/* SHARE MODE BANNER */}
+      {shareMode && (
+        <div className="no-print" style={{ background: "#FDF4E0", borderBottom: "2px solid #E5D090", padding: "10px 20px", display: "flex", alignItems: "center", gap: 12, justifyContent: "center", flexWrap: "wrap", zIndex: 150, position: "relative" }}>
+          <span style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A7010" }}>🔗 CAVE PARTAGÉE · LECTURE SEULE</span>
+          <button onClick={importSharedCellar}
+            style={{ background: "#8B2635", color: "#fff", border: "none", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 1 }}>
+            Importer dans ma cave
+          </button>
+          <button onClick={() => { setShareMode(false); setCellar(loadCellar() || SAMPLE_CELLAR); window.location.hash = ""; }}
+            style={{ background: "none", border: "none", cursor: "pointer", color: "#9A7010", fontSize: 16, lineHeight: 1 }}>✕</button>
+        </div>
+      )}
 
       {/* HEADER */}
       <header style={{ background: "#fff", borderBottom: "1px solid #EAE5DF", position: "sticky", top: 0, zIndex: 100 }}>
@@ -1118,7 +1206,7 @@ Instructions :
           </nav>
           {/* ── Sticky search + filter bar (only on cellar view) ── */}
           {view === "cellar" && (
-            <div style={{ padding: "10px 0", borderTop: "1px solid #F0EBE5", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div className="no-print" style={{ padding: "10px 0", borderTop: "1px solid #F0EBE5", display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Search row */}
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
@@ -1152,8 +1240,10 @@ Instructions :
                   </button>
                   <div id="export-menu" style={{ display: "none", position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 200, background: "#fff", border: "1px solid #E5E0DA", borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", minWidth: 150, overflow: "hidden" }}>
                     {[
-                      { label: "⬇ Exporter JSON", action: () => exportJSON(cellar) },
-                      { label: "⬇ Exporter CSV",  action: () => exportCSV(cellar) },
+                      { label: "🔗 Partager ma cave", action: copyShareURL },
+                      { label: "🖨️ Imprimer / PDF",   action: () => window.print() },
+                      { label: "⬇ Exporter JSON",    action: () => exportJSON(cellar) },
+                      { label: "⬇ Exporter CSV",     action: () => exportCSV(cellar) },
                     ].map(({ label, action }) => (
                       <div key={label} onMouseDown={() => { action(); document.getElementById("export-menu").style.display = "none"; }}
                         style={{ padding: "11px 16px", cursor: "pointer", fontSize: 14, fontFamily: "'Cormorant Garamond',serif", color: "#3A2A1A", borderBottom: "1px solid #F5F0EC" }}
