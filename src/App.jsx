@@ -4,28 +4,67 @@ import { useState, useEffect } from "react";
 const STORAGE_KEY = "ma_cave_v2";
 
 // ── Persistence ───────────────────────────────────────────────────────────────
-function loadCellar() {
+// Sync path (localStorage + sessionStorage) — used for the instant initial render
+function loadCellarSync() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      // Mirror to sessionStorage so data survives within the tab even if localStorage is cleared
-      try { sessionStorage.setItem(STORAGE_KEY, raw); } catch {}
-      return parsed;
-    }
+    if (raw) return JSON.parse(raw);
   } catch {}
-  // localStorage unavailable or empty — try sessionStorage fallback (same tab)
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
   return null;
 }
-function saveCellar(cellar) {
+
+function saveCellarSync(cellar) {
   const json = JSON.stringify(cellar);
   try { localStorage.setItem(STORAGE_KEY, json); } catch {}
   try { sessionStorage.setItem(STORAGE_KEY, json); } catch {}
 }
+
+// Async path (IndexedDB) — more persistent on iOS Safari (survives ITP clearing)
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open("ma_cave", 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore("data");
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbLoad() {
+  try {
+    const db = await idbOpen();
+    return await new Promise(resolve => {
+      const tx = db.transaction("data", "readonly");
+      const req = tx.objectStore("data").get(STORAGE_KEY);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+}
+
+async function idbSave(cellar) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("data", "readwrite");
+      tx.objectStore("data").put(cellar, STORAGE_KEY);
+      tx.oncomplete = resolve;
+      tx.onerror = reject;
+    });
+  } catch {}
+}
+
+// Combined save — sync localStorage immediately, IDB async in background
+function saveCellar(cellar) {
+  saveCellarSync(cellar);
+  idbSave(cellar);
+}
+
+// Keep loadCellar as an alias used by share-mode reset
+function loadCellar() { return loadCellarSync(); }
 
 // ── Sample data ───────────────────────────────────────────────────────────────
 const SAMPLE_CELLAR = [
@@ -844,7 +883,10 @@ function validateWineForm(w) {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function WineCellar() {
-  const [cellar, setCellar] = useState(() => loadCellar() || SAMPLE_CELLAR);
+  const [cellar, setCellar] = useState(() => loadCellarSync() || SAMPLE_CELLAR);
+  // storageReady: false until the IDB check completes — prevents saving SAMPLE_CELLAR
+  // back to storage before we know whether IDB has real user data.
+  const [storageReady, setStorageReady] = useState(() => !!loadCellarSync());
   const [view, setView] = useState("cellar");
   const [selected, setSelected] = useState(null);
   const [aiText, setAiText] = useState("");
@@ -879,21 +921,18 @@ export default function WineCellar() {
   const [pendingConsume, setPendingConsume] = useState(null);
   const [shareMode, setShareMode] = useState(false);
 
-  // On mount: warn if localStorage is unavailable (private mode) or was cleared (iOS ITP)
+  // On mount: if localStorage was empty, check IndexedDB (survives iOS ITP better).
+  // We must do this BEFORE the save effect runs so we don't overwrite real data
+  // with SAMPLE_CELLAR. storageReady gates the save effect.
   useEffect(() => {
-    try {
-      localStorage.setItem('__test__', '1');
-      localStorage.removeItem('__test__');
-    } catch {
-      showToast("⚠️ Stockage indisponible (mode privé ?) — vos données ne seront pas sauvegardées");
-      return;
-    }
-    // iOS Safari clears localStorage after 7 days of inactivity; remind users to export
-    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-    if (isIOS && !sessionStorage.getItem('ios_warned')) {
-      sessionStorage.setItem('ios_warned', '1');
-      setTimeout(() => showToast("💡 iPhone : exportez votre cave (⋯) pour éviter toute perte de données"), 1500);
-    }
+    if (storageReady) return; // localStorage had data — IDB should be in sync, skip
+    idbLoad().then(data => {
+      if (data && Array.isArray(data) && data.length > 0) {
+        setCellar(data);
+        saveCellarSync(data); // restore to localStorage as well
+      }
+      setStorageReady(true);
+    });
   }, []);
 
   // On mount: check URL hash for a shared cellar
@@ -909,7 +948,11 @@ export default function WineCellar() {
     } catch {}
   }, []);
 
-  useEffect(() => { if (!shareMode) saveCellar(cellar); }, [cellar, shareMode]);
+  // Save on every cellar change — but only after the IDB check is done
+  useEffect(() => {
+    if (shareMode || !storageReady) return;
+    saveCellar(cellar);
+  }, [cellar, shareMode, storageReady]);
 
   function showToast(message, undo) {
     setToast({ message, undo });
