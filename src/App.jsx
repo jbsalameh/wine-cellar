@@ -39,6 +39,11 @@ const TYPE_CONFIG = {
 
 const CY = new Date().getFullYear();
 
+// Normalize accents so "Chateau" matches "Château", "Cotes" matches "Côtes", etc.
+function norm(s) {
+  return String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
 function drinkingStatus(wine) {
   if (CY < wine.drinkFrom) return { label: "Trop tôt", color: "#5B8DD9", bg: "#EEF4FD", icon: "⏳" };
   if (CY > wine.drinkUntil) return { label: "Passé", color: "#AAA", bg: "#F5F5F5", icon: "⚠️" };
@@ -255,6 +260,14 @@ function LoadingSkeleton({ message = "Le sommelier consulte votre cave…" }) {
 }
 
 // ── Statistics Dashboard ──────────────────────────────────────────────────────
+// Rough value estimate: rating-based price proxy (purely indicative)
+function estimateValue(wine) {
+  if (!wine.rating || wine.quantity <= 0) return 0;
+  const r = wine.rating;
+  let pricePerBottle = r >= 98 ? 300 : r >= 95 ? 120 : r >= 92 ? 50 : r >= 89 ? 25 : 12;
+  return pricePerBottle * wine.quantity;
+}
+
 function StatsDashboard({ cellar }) {
   const totalBottles = cellar.reduce((s, w) => s + w.quantity, 0);
   const byType = {};
@@ -268,6 +281,13 @@ function StatsDashboard({ cellar }) {
   const statusColors = { "Trop tôt": "#5B8DD9", "Jeune": "#2E8B57", "Apogée": "#D4820A", "À boire vite": "#C0392B", "Passé": "#AAA" };
   const card = { background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "18px 20px" };
 
+  const totalValue = cellar.reduce((s, w) => s + estimateValue(w), 0);
+  const totalConsumed = cellar.reduce((s, w) => s + (w.log?.length || 0), 0);
+  const avgRating = (() => {
+    const rated = cellar.filter(w => w.rating);
+    return rated.length ? Math.round(rated.reduce((s, w) => s + w.rating, 0) / rated.length) : null;
+  })();
+
   return (
     <div className="fade-in">
       <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 16 }}>✦ TABLEAU DE BORD</div>
@@ -280,6 +300,20 @@ function StatsDashboard({ cellar }) {
           <div key={i} style={{ ...card, textAlign: "center" }}>
             <div style={{ fontSize: 24, marginBottom: 4 }}>{icon}</div>
             <div style={{ fontFamily: "'Cinzel',serif", fontSize: 28, fontWeight: 600, color: "#2A1F15" }}>{val}</div>
+            <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic" }}>{lbl}</div>
+          </div>
+        ))}
+      </div>
+      {/* Value + consumption row */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }} className="grid3">
+        {[
+          ["💰", totalValue > 0 ? `~${totalValue.toLocaleString("fr-FR")} €` : "N/A", "valeur estimée", "#D4820A"],
+          ["🥂", totalConsumed, "dégustations", "#8B2635"],
+          ["⭐", avgRating ? `${avgRating}/100` : "N/A", "note moyenne", "#9A7A10"],
+        ].map(([icon, val, lbl, color], i) => (
+          <div key={i} style={{ ...card, textAlign: "center" }}>
+            <div style={{ fontSize: 24, marginBottom: 4 }}>{icon}</div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 22, fontWeight: 600, color: color || "#2A1F15" }}>{val}</div>
             <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic" }}>{lbl}</div>
           </div>
         ))}
@@ -570,6 +604,56 @@ function LabelSearch({ wine }) {
   );
 }
 
+// ── Consumption Log Modal ─────────────────────────────────────────────────────
+function LogModal({ wine, onSave, onClose }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [form, setForm] = useState({ date: today, occasion: "", note: "", rating: "" });
+  const inp = { background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 7, color: "#2A1F15", padding: "10px 13px", fontFamily: "'Cormorant Garamond',serif", fontSize: 15, width: "100%", outline: "none" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="fade-in" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 440, boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}>
+        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #EAE5DF", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635" }}>🍷 DÉGUSTATION</div>
+            <div style={{ color: "#9A8A7A", fontSize: 14, fontStyle: "italic", marginTop: 2 }}>{wine.name} {wine.year}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A8A7A", fontSize: 20 }}>✕</button>
+        </div>
+        <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 2, color: "#9A8A7A", marginBottom: 5 }}>DATE</div>
+            <input type="date" style={inp} value={form.date} onChange={e => setForm(p => ({ ...p, date: e.target.value }))} />
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 2, color: "#9A8A7A", marginBottom: 5 }}>OCCASION</div>
+            <input style={inp} placeholder="Dîner en famille, anniversaire…" value={form.occasion} onChange={e => setForm(p => ({ ...p, occasion: e.target.value }))} />
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 2, color: "#9A8A7A", marginBottom: 5 }}>NOTE DE DÉGUSTATION</div>
+            <textarea style={{ ...inp, resize: "vertical", minHeight: 80 }} placeholder="Arômes, bouche, finale…" value={form.note} onChange={e => setForm(p => ({ ...p, note: e.target.value }))} />
+          </div>
+          <div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 2, color: "#9A8A7A", marginBottom: 5 }}>NOTE PERSONNELLE /100 (optionnel)</div>
+            <input style={inp} type="number" min="50" max="100" placeholder="Ex: 94" value={form.rating} onChange={e => setForm(p => ({ ...p, rating: e.target.value }))} />
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+            <button
+              onClick={() => { onSave({ ...form, rating: form.rating ? parseInt(form.rating) : null, id: Date.now() }); onClose(); }}
+              style={{ flex: 1, background: "#8B2635", color: "#fff", border: "none", borderRadius: 7, padding: "12px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1.5 }}>
+              Enregistrer
+            </button>
+            <button onClick={onClose} style={{ background: "#fff", color: "#7A6A5A", border: "1.5px solid #DDD8D0", borderRadius: 7, padding: "12px 16px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11 }}>
+              Passer
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function Toast({ toast, onDismiss }) {
   useEffect(() => {
@@ -675,6 +759,8 @@ export default function WineCellar() {
   const [tonightLoading, setTonightLoading] = useState(false);
   const [tonightText, setTonightText] = useState("");
   const [tonightError, setTonightError] = useState("");
+  const [showLog, setShowLog] = useState(false);
+  const [pendingConsume, setPendingConsume] = useState(null);
 
   useEffect(() => { saveCellar(cellar); }, [cellar]);
 
@@ -698,8 +784,8 @@ export default function WineCellar() {
         if (!["Apogée", "À boire vite"].includes(drinkingStatus(w).label)) return false;
       } else if (fStatus !== "Tous" && drinkingStatus(w).label !== fStatus) return false;
       if (search.trim()) {
-        const q = search.toLowerCase();
-        if (![w.name, w.appellation, w.grape, w.notes, w.region].some(f => f && f.toLowerCase().includes(q))) return false;
+        const q = norm(search);
+        if (![w.name, w.appellation, w.grape, w.notes, w.region, String(w.year)].some(f => norm(f).includes(q))) return false;
       }
       return true;
     })
@@ -837,9 +923,19 @@ Instructions :
 
   function consumeBottle(wine) {
     if (wine.quantity <= 0) return;
-    const updated = { ...wine, quantity: wine.quantity - 1 };
+    setPendingConsume(wine);
+    setShowLog(true);
+  }
+
+  function saveConsumptionLog(wine, entry) {
+    const updated = {
+      ...wine,
+      quantity: wine.quantity - 1,
+      log: [...(wine.log || []), entry],
+    };
     setCellar(p => p.map(w => w.id === wine.id ? updated : w));
     setSelected(updated);
+    showToast("Dégustation enregistrée ✓");
   }
 
   function deleteWine(id) {
@@ -893,6 +989,13 @@ Instructions :
         a{color:inherit}
       `}</style>
 
+      {showLog && pendingConsume && (
+        <LogModal
+          wine={pendingConsume}
+          onSave={(entry) => saveConsumptionLog(pendingConsume, entry)}
+          onClose={() => { setShowLog(false); setPendingConsume(null); }}
+        />
+      )}
       {showScan && <ScanModal onClose={() => setShowScan(false)} cellar={cellar} onAdd={(wines) => {
         setCellar(p => [...p, ...wines]);
         showToast(`${wines.length} vin${wines.length > 1 ? "s" : ""} ajouté${wines.length > 1 ? "s" : ""} ✓`);
@@ -1187,6 +1290,39 @@ Instructions :
                   </div>
                 </div>
               </div>
+
+              {/* Consumption history */}
+              {selected.log && selected.log.length > 0 && (
+                <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "20px 22px", marginBottom: 16 }}>
+                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 16 }}>📖 HISTORIQUE DE DÉGUSTATION</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {[...selected.log].reverse().map((entry, i) => (
+                      <div key={entry.id || i} style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                          <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#8B2635", marginTop: 4 }} />
+                          {i < selected.log.length - 1 && <div style={{ width: 1, flex: 1, background: "#EAE5DF", minHeight: 20, marginTop: 4 }} />}
+                        </div>
+                        <div style={{ flex: 1, background: "#FAF7F3", borderRadius: 10, padding: "12px 14px" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: entry.note || entry.occasion ? 6 : 0 }}>
+                            <span style={{ fontFamily: "'Cinzel',serif", fontSize: 12, color: "#6A5A4A", letterSpacing: 1 }}>
+                              {new Date(entry.date).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}
+                            </span>
+                            {entry.rating && (
+                              <span style={{ fontSize: 13, color: "#D4820A", fontWeight: 600 }}>⭐ {entry.rating}/100</span>
+                            )}
+                          </div>
+                          {entry.occasion && (
+                            <div style={{ fontSize: 14, color: "#8B2635", fontStyle: "italic", marginBottom: entry.note ? 4 : 0 }}>{entry.occasion}</div>
+                          )}
+                          {entry.note && (
+                            <div style={{ fontSize: 14, color: "#4A3A2A", lineHeight: 1.6 }}>{entry.note}</div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "20px 22px", marginBottom: 16 }}>
                 <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#5B8DD9", display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>🔍 RECHERCHER CE VIN</div>
