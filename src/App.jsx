@@ -3,16 +3,12 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Update this if Google releases a newer model ID
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
+const GEMINI_MODEL = "gemini-3.1-flash-lite-preview-06-17";
 const STORAGE_KEY = "ma_cave_v2";
-const API_KEY_STORAGE = "gemini_api_key";
 
-// ── API key helpers ───────────────────────────────────────────────────────────
+// ── API key ───────────────────────────────────────────────────────────────────
 function getApiKey() {
-  return localStorage.getItem(API_KEY_STORAGE) || import.meta.env.VITE_GEMINI_API_KEY || "";
-}
-function saveApiKey(key) {
-  localStorage.setItem(API_KEY_STORAGE, key.trim());
+  return import.meta.env.VITE_GEMINI_API_KEY || "";
 }
 
 // ── Persistence ───────────────────────────────────────────────────────────────
@@ -148,60 +144,6 @@ Identifie tous les vins visibles sur cette photo. Retourne uniquement le tableau
 }
 
 const SYS = `Tu es un sommelier expert de renommée mondiale. Tu réponds uniquement en français, avec précision et élégance. Sois concis mais complet. Structure ta réponse avec des titres en majuscules suivis de deux-points.`;
-
-// ── Settings Modal ────────────────────────────────────────────────────────────
-function SettingsModal({ onClose }) {
-  const [key, setKey] = useState(getApiKey());
-  const [saved, setSaved] = useState(false);
-
-  function handleSave() {
-    saveApiKey(key);
-    setSaved(true);
-    setTimeout(() => { setSaved(false); onClose(); }, 800);
-  }
-
-  const inp = { background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 7, color: "#2A1F15", padding: "10px 13px", fontFamily: "'Cormorant Garamond',serif", fontSize: 16, width: "100%", outline: "none" };
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-      onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="fade-in" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 480, boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}>
-        <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #EAE5DF", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 14, letterSpacing: 3, color: "#8B2635" }}>⚙️ PARAMÈTRES</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A8A7A", fontSize: 20 }}>✕</button>
-        </div>
-        <div style={{ padding: 24 }}>
-          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 8 }}>CLÉ API GOOGLE GEMINI</div>
-          <input
-            type="password"
-            style={{ ...inp, marginBottom: 8 }}
-            placeholder="AIza..."
-            value={key}
-            onChange={e => setKey(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && handleSave()}
-            autoComplete="off"
-          />
-          <div style={{ color: "#B0A090", fontSize: 13, fontStyle: "italic", marginBottom: 20 }}>
-            Obtenez votre clé gratuite sur{" "}
-            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: "#5B8DD9" }}>
-              aistudio.google.com
-            </a>
-            . La clé est stockée localement dans votre navigateur.
-          </div>
-          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 8 }}>MODÈLE</div>
-          <div style={{ background: "#FAF7F3", borderRadius: 7, padding: "10px 13px", fontFamily: "'Cormorant Garamond',serif", fontSize: 15, color: "#6A5A4A", marginBottom: 20 }}>
-            {GEMINI_MODEL}
-          </div>
-          <button
-            onClick={handleSave}
-            style={{ width: "100%", background: saved ? "#2E8B57" : "#8B2635", color: "#fff", border: "none", borderRadius: 7, padding: "12px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1.5, transition: "background 0.3s" }}>
-            {saved ? "✓ Enregistré" : "Enregistrer"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── FilterDropdown ────────────────────────────────────────────────────────────
 function FilterDropdown({ label, value, options, onChange }) {
@@ -557,23 +499,6 @@ function LabelSearch({ wine }) {
   );
 }
 
-// ── No API Key Banner ─────────────────────────────────────────────────────────
-function NoKeyBanner({ onOpenSettings }) {
-  return (
-    <div style={{ background: "#FDF8EE", border: "1px solid #E8D8A0", borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
-      <span style={{ fontSize: 22 }}>🔑</span>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1, color: "#8B6A10", marginBottom: 3 }}>CLÉ API MANQUANTE</div>
-        <div style={{ fontSize: 14, color: "#6A5A2A" }}>Configurez votre clé Gemini pour activer le sommelier IA et le scan de bouteilles.</div>
-      </div>
-      <button onClick={onOpenSettings}
-        style={{ background: "#D4820A", color: "#fff", border: "none", borderRadius: 7, padding: "9px 16px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1, whiteSpace: "nowrap" }}>
-        Configurer
-      </button>
-    </div>
-  );
-}
-
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function WineCellar() {
   const [cellar, setCellar] = useState(() => loadCellar() || SAMPLE_CELLAR);
@@ -585,9 +510,7 @@ export default function WineCellar() {
   const [showForm, setShowForm] = useState(false);
   const [showScan, setShowScan] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState("");
-  const [hasKey, setHasKey] = useState(!!getApiKey());
 
   const [fType, setFType] = useState("Tous");
   const [fRegion, setFRegion] = useState("Tous");
@@ -601,12 +524,6 @@ export default function WineCellar() {
   const [pairingError, setPairingError] = useState("");
 
   useEffect(() => { saveCellar(cellar); }, [cellar]);
-
-  // Re-check API key whenever settings modal closes
-  function handleSettingsClose() {
-    setShowSettings(false);
-    setHasKey(!!getApiKey());
-  }
 
   const regions = ["Tous", ...Array.from(new Set(cellar.map(w => w.region))).sort()];
   const appellations = ["Tous", ...Array.from(new Set(cellar.filter(w => fRegion === "Tous" || w.region === fRegion).map(w => w.appellation).filter(Boolean))).sort()];
@@ -733,7 +650,6 @@ Instructions :
 
       {showScan && <ScanModal onClose={() => setShowScan(false)} onAdd={(wines) => setCellar(p => [...p, ...wines])} />}
       {showEdit && selected && <EditModal wine={selected} onSave={updateWine} onClose={() => setShowEdit(false)} />}
-      {showSettings && <SettingsModal onClose={handleSettingsClose} />}
 
       {/* HEADER */}
       <header style={{ background: "#fff", borderBottom: "1px solid #EAE5DF", position: "sticky", top: 0, zIndex: 100 }}>
@@ -743,11 +659,6 @@ Instructions :
               <div style={{ fontFamily: "'Cinzel',serif", fontSize: 22, fontWeight: 600, letterSpacing: 3, color: "#8B2635" }}>🍷 MA CAVE</div>
               <div style={{ fontSize: 13, color: "#9A8A7A", fontStyle: "italic", marginTop: 2 }}>{totalBottles} bouteilles · {readyNow} à l'apogée</div>
             </div>
-            <button onClick={() => setShowSettings(true)}
-              title="Paramètres"
-              style={{ background: hasKey ? "#EEF8F2" : "#FDF8EE", border: `1.5px solid ${hasKey ? "#A8D8B8" : "#E8D8A0"}`, borderRadius: 8, padding: "7px 12px", cursor: "pointer", fontSize: 18, color: hasKey ? "#2E8B57" : "#D4820A", display: "flex", alignItems: "center", gap: 6 }}>
-              ⚙️ <span style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1 }}>{hasKey ? "API OK" : "Config"}</span>
-            </button>
           </div>
           <nav style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
             {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"]].map(([v, label]) => {
@@ -771,7 +682,7 @@ Instructions :
         {/* ── CAVE ────────────────────────────────────────── */}
         {view === "cellar" && (
           <div className="fade-in">
-            {!hasKey && <NoKeyBanner onOpenSettings={() => setShowSettings(true)} />}
+
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
               <FilterDropdown label="Type" value={fType} options={types} onChange={setFType} />
               <FilterDropdown label="Région" value={fRegion} options={regions} onChange={v => { setFRegion(v); setFAppellation("Tous"); }} />
@@ -785,7 +696,7 @@ Instructions :
               )}
               <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                 <button style={{ ...btnG, display: "flex", alignItems: "center", gap: 6, borderColor: "#C8D8F0", color: "#5B8DD9" }}
-                  onClick={() => hasKey ? setShowScan(true) : setShowSettings(true)}>
+                  onClick={() => setShowScan(true)}>
                   📷 <span>Scanner</span>
                 </button>
                 <button style={btnG} onClick={() => setShowForm(s => !s)}>+ Saisir</button>
@@ -941,7 +852,7 @@ Instructions :
         {/* ── PAIRING ─────────────────────────────────────── */}
         {view === "pairing" && (
           <div className="fade-in">
-            {!hasKey && <NoKeyBanner onOpenSettings={() => setShowSettings(true)} />}
+
             <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 8 }}>✦ ACCORDS METS-VINS</div>
             <p style={{ color: "#9A8A7A", fontStyle: "italic", fontSize: 16, marginBottom: 20 }}>
               Décrivez votre plat — le sommelier sélectionne les meilleures bouteilles de votre cave, ou vous suggère quoi acheter.
