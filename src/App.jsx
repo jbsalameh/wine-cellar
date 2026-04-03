@@ -986,6 +986,8 @@ Instructions :
         .fade-in{animation:fadeIn .3s ease}
         @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         @media(max-width:560px){.hide-sm{display:none!important}.grid2{grid-template-columns:1fr!important}.grid3{grid-template-columns:1fr 1fr!important}}
+        @media(max-width:600px){.top-nav{display:none!important}main{padding-bottom:76px!important}.bottom-nav{display:flex!important}}
+        .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #EAE5DF;z-index:200;justify-content:space-around;align-items:stretch;padding-bottom:env(safe-area-inset-bottom,0px)}
         a{color:inherit}
       `}</style>
 
@@ -1012,7 +1014,7 @@ Instructions :
               <div style={{ fontSize: 13, color: "#9A8A7A", fontStyle: "italic", marginTop: 2 }}>{totalBottles} bouteilles · {readyNow} à l'apogée</div>
             </div>
           </div>
-          <nav style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
+          <nav className="top-nav" style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
             {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"]].map(([v, label]) => {
               const active = view === v || (view === "bottle" && v === "cellar");
               return (
@@ -1405,6 +1407,20 @@ Instructions :
           </div>
         )}
       </main>
+
+      {/* ── MOBILE BOTTOM NAV ── */}
+      <nav className="bottom-nav">
+        {[["cellar","🍾","Cave"],["stats","📊","Stats"],["pairing","🍽️","Accords"]].map(([v, icon, label]) => {
+          const active = view === v || (view === "bottle" && v === "cellar");
+          return (
+            <button key={v} onClick={() => setView(v)}
+              style={{ flex: 1, background: "none", border: "none", borderTop: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: active ? "#8B2635" : "#8A7A6A", transition: "all 0.15s" }}>
+              <span style={{ fontSize: 22, lineHeight: 1 }}>{icon}</span>
+              <span style={{ fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1.5 }}>{label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
       <footer style={{ textAlign: "center", padding: "14px", borderTop: "1px solid #EAE5DF", color: "#C0B0A0", fontSize: 12, fontStyle: "italic", background: "#fff" }}>
         In vino veritas · Sommelier propulsé par Gemini

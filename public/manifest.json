@@ -1,0 +1,25 @@
+{
+  "name": "Ma Cave · Sommelier IA",
+  "short_name": "Ma Cave",
+  "description": "Votre cave à vin personnelle avec conseils de sommelier IA",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F8F5F1",
+  "theme_color": "#8B2635",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
