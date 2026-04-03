@@ -320,7 +320,7 @@ function EditModal({ wine, onSave, onClose }) {
 }
 
 // ── Scan Modal ────────────────────────────────────────────────────────────────
-function ScanModal({ onClose, onAdd }) {
+function ScanModal({ onClose, onAdd, cellar = [] }) {
   const [phase, setPhase] = useState("idle");
   const [preview, setPreview] = useState(null);
   const [detected, setDetected] = useState([]);
@@ -416,8 +416,12 @@ function ScanModal({ onClose, onAdd }) {
               </div>
               {detected.map((wine, i) => {
                 const tc = TYPE_CONFIG[wine.type] || TYPE_CONFIG.Rouge;
+                const isDupe = cellar.some(w =>
+                  w.name.trim().toLowerCase() === String(wine.name || "").trim().toLowerCase() &&
+                  w.year === parseInt(wine.year)
+                );
                 return (
-                  <div key={i} style={{ background: selected[i] ? "#FDFBF8" : "#F5F5F5", border: `1.5px solid ${selected[i] ? "#C5A090" : "#E0E0E0"}`, borderRadius: 10, padding: "14px 16px", marginBottom: 10, cursor: "pointer" }}
+                  <div key={i} style={{ background: selected[i] ? "#FDFBF8" : "#F5F5F5", border: `1.5px solid ${isDupe ? "#E8D8A0" : selected[i] ? "#C5A090" : "#E0E0E0"}`, borderRadius: 10, padding: "14px 16px", marginBottom: 10, cursor: "pointer" }}
                     onClick={() => setSelected(s => ({ ...s, [i]: !s[i] }))}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <div style={{ flex: 1 }}>
@@ -425,6 +429,7 @@ function ScanModal({ onClose, onAdd }) {
                           <span style={{ fontWeight: 600, fontSize: 17 }}>{wine.name}</span>
                           <span style={{ color: "#8A7A6A", fontStyle: "italic" }}>{wine.year}</span>
                           <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: tc.pill, color: tc.color }}>{wine.type}</span>
+                          {isDupe && <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: "#FDF8EE", color: "#D4820A", border: "1px solid #E8D8A0" }}>⚠️ Doublon</span>}
                         </div>
                         <div style={{ color: "#9A8A7A", fontSize: 14 }}>
                           {wine.appellation && <>{wine.appellation} · </>}{wine.region}{wine.grape ? ` · ${wine.grape}` : ""}
@@ -495,6 +500,78 @@ function LabelSearch({ wine }) {
   );
 }
 
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function Toast({ toast, onDismiss }) {
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(t);
+  }, [toast, onDismiss]);
+  if (!toast) return null;
+  return (
+    <div className="fade-in" style={{ position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)", background: "#2A1F15", color: "#F8F5F1", borderRadius: 10, padding: "12px 20px", display: "flex", alignItems: "center", gap: 14, zIndex: 2000, boxShadow: "0 8px 32px rgba(0,0,0,0.25)", whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: 15, fontFamily: "'Cormorant Garamond',serif" }}>{toast.message}</span>
+      {toast.undo && (
+        <button onClick={() => { toast.undo(); onDismiss(); }}
+          style={{ background: "#8B2635", color: "#fff", border: "none", borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1 }}>
+          Annuler
+        </button>
+      )}
+      <button onClick={onDismiss} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A8A7A", fontSize: 16, lineHeight: 1, paddingLeft: 4 }}>✕</button>
+    </div>
+  );
+}
+
+// ── Export / Import helpers ────────────────────────────────────────────────────
+const CSV_HEADERS = ["name","year","region","appellation","type","grape","quantity","drinkFrom","drinkUntil","rating","notes"];
+
+function exportJSON(cellar) {
+  const blob = new Blob([JSON.stringify(cellar, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url;
+  a.download = `ma-cave-${new Date().toISOString().slice(0,10)}.json`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function exportCSV(cellar) {
+  const escape = v => (typeof v === "string" && (v.includes(",") || v.includes('"'))) ? `"${v.replace(/"/g,'""')}"` : (v ?? "");
+  const rows = cellar.map(w => CSV_HEADERS.map(h => escape(w[h])).join(","));
+  const blob = new Blob([[CSV_HEADERS.join(","), ...rows].join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url;
+  a.download = `ma-cave-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+}
+
+function parseImport(text, filename) {
+  if (filename.endsWith(".json")) {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error("Le fichier JSON doit contenir un tableau.");
+    return parsed;
+  }
+  // CSV
+  const [header, ...rows] = text.trim().split(/\r?\n/);
+  const keys = header.split(",").map(k => k.trim());
+  return rows.filter(r => r.trim()).map(row => {
+    const vals = row.match(/(".*?"|[^,]+|(?<=,)(?=,)|(?<=,)$|^(?=,))/g) || [];
+    const obj = {};
+    keys.forEach((k, i) => { obj[k] = (vals[i] || "").replace(/^"|"$/g, "").trim(); });
+    return obj;
+  });
+}
+
+// ── Form validation ────────────────────────────────────────────────────────────
+function validateWineForm(w) {
+  const errors = {};
+  if (!String(w.name || "").trim()) errors.name = "Nom requis";
+  const y = parseInt(w.year);
+  if (!y || y < 1800 || y > CY + 5) errors.year = `Millésime invalide (1800–${CY + 5})`;
+  const from = parseInt(w.drinkFrom), until = parseInt(w.drinkUntil);
+  if (from && until && until < from) errors.drinkUntil = "Doit être après la date de début";
+  if (parseInt(w.quantity) < 0) errors.quantity = "Quantité invalide";
+  return errors;
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 export default function WineCellar() {
   const [cellar, setCellar] = useState(() => loadCellar() || SAMPLE_CELLAR);
@@ -517,12 +594,19 @@ export default function WineCellar() {
   const [drinkTonight, setDrinkTonight] = useState(false);
 
   const [newWine, setNewWine] = useState({ name: "", year: "", region: "", appellation: "", type: "Rouge", grape: "", quantity: 1, drinkFrom: "", drinkUntil: "", notes: "" });
+  const [formErrors, setFormErrors] = useState({});
 
   const [pairingText, setPairingText] = useState("");
   const [pairingLoading, setPairingLoading] = useState(false);
   const [pairingError, setPairingError] = useState("");
 
+  const [toast, setToast] = useState(null);
+
   useEffect(() => { saveCellar(cellar); }, [cellar]);
+
+  function showToast(message, undo) {
+    setToast({ message, undo });
+  }
 
   const regions = ["Tous", ...Array.from(new Set(cellar.map(w => w.region))).sort()];
   const appellations = ["Tous", ...Array.from(new Set(cellar.filter(w => fRegion === "Tous" || w.region === fRegion).map(w => w.appellation).filter(Boolean))).sort()];
@@ -619,8 +703,14 @@ Instructions :
   }
 
   function addWine() {
-    if (!newWine.name || !newWine.year) return;
+    const errors = validateWineForm(newWine);
+    if (Object.keys(errors).length) { setFormErrors(errors); return; }
     const y = parseInt(newWine.year);
+    const isDupe = cellar.some(w =>
+      w.name.trim().toLowerCase() === newWine.name.trim().toLowerCase() && w.year === y
+    );
+    if (isDupe) { setFormErrors({ name: `"${newWine.name.trim()} ${y}" est déjà dans votre cave` }); return; }
+    setFormErrors({});
     setCellar(p => [...p, {
       ...newWine,
       id: Date.now(),
@@ -632,6 +722,7 @@ Instructions :
     }]);
     setNewWine({ name: "", year: "", region: "", appellation: "", type: "Rouge", grape: "", quantity: 1, drinkFrom: "", drinkUntil: "", notes: "" });
     setShowForm(false);
+    showToast("Vin ajouté à la cave ✓");
   }
 
   function updateWine(updated) {
@@ -647,9 +738,37 @@ Instructions :
   }
 
   function deleteWine(id) {
+    const wine = cellar.find(w => w.id === id);
     setCellar(p => p.filter(w => w.id !== id));
     setView("cellar");
     setSelected(null);
+    showToast(`"${wine.name} ${wine.year}" supprimé`, () => setCellar(p => [...p, wine]));
+  }
+
+  function importWines(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const parsed = parseImport(e.target.result, file.name);
+        const normalized = parsed.map(w => ({
+          ...w,
+          id: Date.now() + Math.random(),
+          year: parseInt(w.year) || CY,
+          quantity: parseInt(w.quantity) || 1,
+          drinkFrom: parseInt(w.drinkFrom) || CY,
+          drinkUntil: parseInt(w.drinkUntil) || CY + 10,
+          rating: w.rating ? parseInt(w.rating) : null,
+        }));
+        if (!normalized.length) throw new Error("Aucun vin trouvé dans le fichier.");
+        const prev = cellar;
+        setCellar(normalized);
+        showToast(`${normalized.length} vins importés`, () => setCellar(prev));
+      } catch (err) {
+        showToast(`Erreur d'import : ${err.message}`);
+      }
+    };
+    reader.readAsText(file);
   }
 
   const inp = { background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 7, color: "#2A1F15", padding: "10px 13px", fontFamily: "'Cormorant Garamond',serif", fontSize: 16, width: "100%", outline: "none", transition: "border-color 0.15s" };
@@ -669,7 +788,11 @@ Instructions :
         a{color:inherit}
       `}</style>
 
-      {showScan && <ScanModal onClose={() => setShowScan(false)} onAdd={(wines) => setCellar(p => [...p, ...wines])} />}
+      {showScan && <ScanModal onClose={() => setShowScan(false)} cellar={cellar} onAdd={(wines) => {
+        setCellar(p => [...p, ...wines]);
+        showToast(`${wines.length} vin${wines.length > 1 ? "s" : ""} ajouté${wines.length > 1 ? "s" : ""} ✓`);
+      }} />}
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
       {showEdit && selected && <EditModal wine={selected} onSave={updateWine} onClose={() => setShowEdit(false)} />}
 
       {/* HEADER */}
@@ -714,7 +837,13 @@ Instructions :
                   style={{ ...btnG, display: "flex", alignItems: "center", gap: 5, borderColor: "#C8D8F0", color: "#5B8DD9", flexShrink: 0 }}>
                   📷 <span className="hide-sm">Scanner</span>
                 </button>
-                <button style={{ ...btnG, flexShrink: 0 }} onClick={() => setShowForm(s => !s)}>+ Saisir</button>
+                <button style={{ ...btnG, flexShrink: 0 }} onClick={() => { setShowForm(s => !s); setFormErrors({}); }}>+ Saisir</button>
+                <button onClick={() => exportJSON(cellar)} title="Exporter JSON" style={{ ...btnG, flexShrink: 0, padding: "9px 11px" }}>⬇ JSON</button>
+                <button onClick={() => exportCSV(cellar)} title="Exporter CSV" style={{ ...btnG, flexShrink: 0, padding: "9px 11px" }}>⬇ CSV</button>
+                <label title="Importer JSON ou CSV" style={{ ...btnG, flexShrink: 0, padding: "9px 11px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
+                  ⬆ Import
+                  <input type="file" accept=".json,.csv" style={{ display: "none" }} onChange={e => { importWines(e.target.files[0]); e.target.value = ""; }} />
+                </label>
               </div>
               {/* Filter + sort row */}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -775,19 +904,28 @@ Instructions :
                 <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 14 }}>✦ SAISIE MANUELLE</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }} className="grid2">
                   {[["Nom du vin *","name"],["Millésime *","year"],["Région","region"],["Appellation","appellation"],["Cépage","grape"]].map(([ph,key]) => (
-                    <input key={key} style={inp} placeholder={ph} value={newWine[key]} onChange={e => setNewWine(p => ({ ...p, [key]: e.target.value }))} />
+                    <div key={key}>
+                      <input style={{ ...inp, borderColor: formErrors[key] ? "#C0392B" : "#DDD8D0" }} placeholder={ph} value={newWine[key]} onChange={e => { setNewWine(p => ({ ...p, [key]: e.target.value })); setFormErrors(p => ({ ...p, [key]: undefined })); }} />
+                      {formErrors[key] && <div style={{ color: "#C0392B", fontSize: 12, marginTop: 3 }}>{formErrors[key]}</div>}
+                    </div>
                   ))}
                   <select style={inp} value={newWine.type} onChange={e => setNewWine(p => ({ ...p, type: e.target.value }))}>
                     {["Rouge","Blanc","Rosé","Champagne","Liquoreux"].map(t => <option key={t}>{t}</option>)}
                   </select>
-                  <input style={inp} placeholder="Quantité" type="number" min="1" value={newWine.quantity} onChange={e => setNewWine(p => ({ ...p, quantity: e.target.value }))} />
+                  <div>
+                    <input style={{ ...inp, borderColor: formErrors.quantity ? "#C0392B" : "#DDD8D0" }} placeholder="Quantité" type="number" min="1" value={newWine.quantity} onChange={e => setNewWine(p => ({ ...p, quantity: e.target.value }))} />
+                    {formErrors.quantity && <div style={{ color: "#C0392B", fontSize: 12, marginTop: 3 }}>{formErrors.quantity}</div>}
+                  </div>
                   <input style={inp} placeholder="Boire à partir de" value={newWine.drinkFrom} onChange={e => setNewWine(p => ({ ...p, drinkFrom: e.target.value }))} />
-                  <input style={inp} placeholder="Boire avant" value={newWine.drinkUntil} onChange={e => setNewWine(p => ({ ...p, drinkUntil: e.target.value }))} />
+                  <div>
+                    <input style={{ ...inp, borderColor: formErrors.drinkUntil ? "#C0392B" : "#DDD8D0" }} placeholder="Boire avant" value={newWine.drinkUntil} onChange={e => { setNewWine(p => ({ ...p, drinkUntil: e.target.value })); setFormErrors(p => ({ ...p, drinkUntil: undefined })); }} />
+                    {formErrors.drinkUntil && <div style={{ color: "#C0392B", fontSize: 12, marginTop: 3 }}>{formErrors.drinkUntil}</div>}
+                  </div>
                 </div>
                 <input style={{ ...inp, marginBottom: 14 }} placeholder="Notes" value={newWine.notes} onChange={e => setNewWine(p => ({ ...p, notes: e.target.value }))} />
                 <div style={{ display: "flex", gap: 10 }}>
                   <button style={btnP} onClick={addWine}>Ajouter à la cave</button>
-                  <button style={btnG} onClick={() => setShowForm(false)}>Annuler</button>
+                  <button style={btnG} onClick={() => { setShowForm(false); setFormErrors({}); }}>Annuler</button>
                 </div>
               </div>
             )}
