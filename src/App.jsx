@@ -921,14 +921,14 @@ Instructions :
             })}
           </nav>
           {/* ── Sticky search + filter bar (only on cellar view) ── */}
-          {(view === "cellar" || view === "bottle") && (
+          {view === "cellar" && (
             <div style={{ padding: "10px 0", borderTop: "1px solid #F0EBE5", display: "flex", flexDirection: "column", gap: 8 }}>
               {/* Search row */}
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ flex: 1, position: "relative" }}>
+                <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
                   <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#B0A090", fontSize: 15, pointerEvents: "none" }}>🔍</span>
                   <input
-                    style={{ width: "100%", background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 8, padding: "8px 12px 8px 34px", fontFamily: "'Cormorant Garamond',serif", fontSize: 15, color: "#2A1F15", outline: "none" }}
+                    style={{ boxSizing: "border-box", width: "100%", background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 8, padding: "8px 32px 8px 34px", fontFamily: "'Cormorant Garamond',serif", fontSize: 15, color: "#2A1F15", outline: "none" }}
                     placeholder="Rechercher un vin, cépage, appellation…"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
@@ -943,12 +943,37 @@ Instructions :
                   📷 <span className="hide-sm">Scanner</span>
                 </button>
                 <button style={{ ...btnG, flexShrink: 0 }} onClick={() => { setShowForm(s => !s); setFormErrors({}); }}>+ Saisir</button>
-                <button onClick={() => exportJSON(cellar)} title="Exporter JSON" style={{ ...btnG, flexShrink: 0, padding: "9px 11px" }}>⬇ JSON</button>
-                <button onClick={() => exportCSV(cellar)} title="Exporter CSV" style={{ ...btnG, flexShrink: 0, padding: "9px 11px" }}>⬇ CSV</button>
-                <label title="Importer JSON ou CSV" style={{ ...btnG, flexShrink: 0, padding: "9px 11px", cursor: "pointer", display: "inline-flex", alignItems: "center" }}>
-                  ⬆ Import
-                  <input type="file" accept=".json,.csv" style={{ display: "none" }} onChange={e => { importWines(e.target.files[0]); e.target.value = ""; }} />
-                </label>
+                {/* Export/Import dropdown */}
+                <div style={{ position: "relative", flexShrink: 0 }}>
+                  <button
+                    id="export-btn"
+                    style={{ ...btnG, padding: "9px 11px" }}
+                    onClick={() => document.getElementById("export-menu").style.display === "none"
+                      ? (document.getElementById("export-menu").style.display = "block")
+                      : (document.getElementById("export-menu").style.display = "none")}
+                    onBlur={() => setTimeout(() => { const m = document.getElementById("export-menu"); if (m) m.style.display = "none"; }, 150)}>
+                    ⋯
+                  </button>
+                  <div id="export-menu" style={{ display: "none", position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 200, background: "#fff", border: "1px solid #E5E0DA", borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", minWidth: 150, overflow: "hidden" }}>
+                    {[
+                      { label: "⬇ Exporter JSON", action: () => exportJSON(cellar) },
+                      { label: "⬇ Exporter CSV",  action: () => exportCSV(cellar) },
+                    ].map(({ label, action }) => (
+                      <div key={label} onMouseDown={() => { action(); document.getElementById("export-menu").style.display = "none"; }}
+                        style={{ padding: "11px 16px", cursor: "pointer", fontSize: 14, fontFamily: "'Cormorant Garamond',serif", color: "#3A2A1A", borderBottom: "1px solid #F5F0EC" }}
+                        onMouseOver={e => e.currentTarget.style.background = "#FAF5F0"}
+                        onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+                        {label}
+                      </div>
+                    ))}
+                    <label style={{ padding: "11px 16px", cursor: "pointer", fontSize: 14, fontFamily: "'Cormorant Garamond',serif", color: "#3A2A1A", display: "block" }}
+                      onMouseOver={e => e.currentTarget.style.background = "#FAF5F0"}
+                      onMouseOut={e => e.currentTarget.style.background = "transparent"}>
+                      ⬆ Importer JSON/CSV
+                      <input type="file" accept=".json,.csv" style={{ display: "none" }} onChange={e => { importWines(e.target.files[0]); e.target.value = ""; document.getElementById("export-menu").style.display = "none"; }} />
+                    </label>
+                  </div>
+                </div>
               </div>
               {/* Filter + sort row */}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
