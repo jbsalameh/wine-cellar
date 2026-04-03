@@ -1,15 +1,7 @@
 import { useState, useEffect } from "react";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ── Config ────────────────────────────────────────────────────────────────────
-// Update this if Google releases a newer model ID
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const STORAGE_KEY = "ma_cave_v2";
-
-// ── API key ───────────────────────────────────────────────────────────────────
-function getApiKey() {
-  return import.meta.env.VITE_GEMINI_API_KEY || "";
-}
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 function loadCellar() {
@@ -56,27 +48,23 @@ function drinkingStatus(wine) {
   return { label: "À boire vite", color: "#C0392B", bg: "#FDF0EE", icon: "🍷" };
 }
 
-// ── Gemini API helpers ────────────────────────────────────────────────────────
-function buildGenAI() {
-  const key = getApiKey();
-  if (!key) throw new Error("Clé API Gemini manquante. Cliquez sur ⚙️ pour la configurer.");
-  return new GoogleGenerativeAI(key);
-}
-
+// ── Gemini API helpers (proxied through /api/gemini) ─────────────────────────
 async function askGemini(systemPrompt, userPrompt, maxOutputTokens = 1000) {
-  const genAI = buildGenAI();
-  const model = genAI.getGenerativeModel({
-    model: GEMINI_MODEL,
-    systemInstruction: systemPrompt,
-  });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-      generationConfig: { maxOutputTokens },
+    const res = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ type: "text", system: systemPrompt, prompt: userPrompt, maxOutputTokens }),
     });
-    return result.response.text();
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur API (${res.status})`);
+    }
+    const data = await res.json();
+    return data.text;
   } finally {
     clearTimeout(timeout);
   }
@@ -123,11 +111,14 @@ function extractJSON(raw) {
 }
 
 async function analyzeBottlePhoto(base64Data, mediaType = "image/jpeg") {
-  const genAI = buildGenAI();
-  const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-  const result = await model.generateContent([
-    { inlineData: { data: base64Data, mimeType: mediaType } },
-    `Tu es un expert en vins qui analyse des photos de bouteilles ou d'étiquettes de vin.
+  const res = await fetch("/api/gemini", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "vision",
+      base64: base64Data,
+      mediaType,
+      prompt: `Tu es un expert en vins qui analyse des photos de bouteilles ou d'étiquettes de vin.
 Réponds UNIQUEMENT avec du JSON valide, sans markdown, sans backticks, sans commentaires.
 Le JSON doit être un tableau d'objets avec exactement ces clés :
 name, year, region, appellation, type, grape, quantity, drinkFrom, drinkUntil, rating, notes
@@ -138,9 +129,14 @@ name, year, region, appellation, type, grape, quantity, drinkFrom, drinkUntil, r
 - quantity vaut 1 par défaut (sauf si plusieurs bouteilles visibles)
 - notes peut être vide ""
 Identifie tous les vins visibles sur cette photo. Retourne uniquement le tableau JSON.`,
-  ]);
-  const raw = result.response.text();
-  return extractJSON(raw);
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Erreur API (${res.status})`);
+  }
+  const data = await res.json();
+  return extractJSON(data.text);
 }
 
 const SYS = `Tu es un sommelier expert de renommée mondiale. Tu réponds uniquement en français, avec précision et élégance. Sois concis mais complet. Structure ta réponse avec des titres en majuscules suivis de deux-points.`;
