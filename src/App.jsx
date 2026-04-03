@@ -49,7 +49,9 @@ function drinkingStatus(wine) {
 }
 
 // ── Gemini API helpers (proxied through /api/gemini) ─────────────────────────
-async function askGemini(systemPrompt, userPrompt, maxOutputTokens = 1000) {
+
+// Standard (non-streaming) call — used for pairing and vision
+async function askGemini(systemPrompt, userPrompt, maxOutputTokens = 1200) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
   try {
@@ -68,6 +70,74 @@ async function askGemini(systemPrompt, userPrompt, maxOutputTokens = 1000) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// Streaming call — calls onChunk(partialText) as tokens arrive, returns full text
+async function askGeminiStream(systemPrompt, userPrompt, onChunk, maxOutputTokens = 1200) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  try {
+    const res = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({ type: "text", system: systemPrompt, prompt: userPrompt, maxOutputTokens, stream: true }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `Erreur API (${res.status})`);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let full = "";
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop(); // keep incomplete line
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const raw = line.slice(5).trim();
+        if (!raw || raw === "[DONE]") continue;
+        try {
+          const { text } = JSON.parse(raw);
+          if (text) { full += text; onChunk(full); }
+        } catch {}
+      }
+    }
+    return full;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Parse sommelier text into structured sections
+// Expected headings: MOMENT IDÉAL, ACCORDS METS-VINS, SERVICE, ANECDOTE
+const SECTION_DEFS = [
+  { key: "moment",  label: "MOMENT IDÉAL",      icon: "⏳" },
+  { key: "accords", label: "ACCORDS METS-VINS",  icon: "🍽️" },
+  { key: "service", label: "SERVICE",             icon: "🌡️" },
+  { key: "anecdote",label: "ANECDOTE",            icon: "📖" },
+];
+
+function parseSommelierText(text) {
+  const sections = {};
+  const headingRe = /^(MOMENT\s+ID[EÉ]AL|ACCORDS?\s+METS?[-–]VINS?|SERVICE|ANECDOTE)\s*[:\-–]/im;
+  // Split on any known heading
+  const parts = text.split(/(?=(?:MOMENT\s+ID[EÉ]AL|ACCORDS?\s+METS?[-–]VINS?|SERVICE|ANECDOTE)\s*[:\-–])/im);
+  for (const part of parts) {
+    const m = part.match(headingRe);
+    if (!m) continue;
+    const heading = m[1].toUpperCase();
+    const body = part.slice(m[0].length).trim();
+    if (heading.includes("MOMENT")) sections.moment = body;
+    else if (heading.includes("ACCORD")) sections.accords = body;
+    else if (heading.includes("SERVICE")) sections.service = body;
+    else if (heading.includes("ANECDOTE")) sections.anecdote = body;
+  }
+  return sections;
 }
 
 // Compress + resize image to JPEG max 1200px, keeping base64 under API limits.
@@ -601,6 +671,10 @@ export default function WineCellar() {
   const [pairingError, setPairingError] = useState("");
 
   const [toast, setToast] = useState(null);
+  const [adviceCache, setAdviceCache] = useState({});
+  const [tonightLoading, setTonightLoading] = useState(false);
+  const [tonightText, setTonightText] = useState("");
+  const [tonightError, setTonightError] = useState("");
 
   useEffect(() => { saveCellar(cellar); }, [cellar]);
 
@@ -650,24 +724,55 @@ export default function WineCellar() {
   async function getBottleAdvice(wine) {
     setSelected(wine);
     setView("bottle");
-    setAiText(""); setError(""); setLoading(true);
+    setError("");
+    // Use cache if available
+    if (adviceCache[wine.id]) {
+      setAiText(adviceCache[wine.id]);
+      setLoading(false);
+      return;
+    }
+    setAiText(""); setLoading(true);
     try {
       const st = drinkingStatus(wine);
-      const text = await askGemini(SYS,
+      const text = await askGeminiStream(
+        SYS,
         `Bouteille : ${wine.name} ${wine.year} — ${wine.region}${wine.appellation ? ", " + wine.appellation : ""} — ${wine.grape}${wine.rating ? ` — ${wine.rating}/100` : ""}${wine.notes ? ` — ${wine.notes}` : ""}
 Fenêtre de dégustation : ${wine.drinkFrom}–${wine.drinkUntil} | Statut en ${CY} : ${st.label}
 
-Réponds en 4 sections :
+Réponds en 4 sections avec exactement ces titres :
 MOMENT IDÉAL : conseil sur quand ouvrir cette bouteille
 ACCORDS METS-VINS : 3 accords détaillés et créatifs
 SERVICE : température, décantation, verre recommandé
-ANECDOTE : un fait marquant sur ce vin`
+ANECDOTE : un fait marquant sur ce vin`,
+        (partial) => setAiText(partial)
       );
-      setAiText(text);
+      setAdviceCache(c => ({ ...c, [wine.id]: text }));
     } catch (e) {
       setError(e.message || "Impossible de contacter le sommelier.");
     }
     setLoading(false);
+  }
+
+  async function getOpenTonightAdvice() {
+    const ready = cellar.filter(w => ["Apogée", "À boire vite"].includes(drinkingStatus(w).label) && w.quantity > 0);
+    if (!ready.length) { setTonightError("Aucune bouteille à l'apogée en cave."); return; }
+    setTonightText(""); setTonightError(""); setTonightLoading(true);
+    try {
+      const list = ready.map(w => `- ${w.name} ${w.year} (${w.type}, ${w.grape}, ${drinkingStatus(w).label}, ${w.quantity} btl${w.rating ? `, ${w.rating}/100` : ""})`).join("\n");
+      const text = await askGeminiStream(
+        SYS,
+        `Voici mes bouteilles actuellement à l'apogée ou à boire rapidement :
+${list}
+
+Choisis LA meilleure bouteille à ouvrir ce soir et explique pourquoi c'est le moment idéal. Donne ensuite : le service recommandé (température, décantation) et un accord mets-vins parfait pour ce soir. Sois concis et enthousiaste.`,
+        (partial) => setTonightText(partial),
+        800
+      );
+      setTonightText(text);
+    } catch (e) {
+      setTonightError(e.message || "Impossible de contacter le sommelier.");
+    }
+    setTonightLoading(false);
   }
 
   async function getMealPairing() {
@@ -899,6 +1004,33 @@ Instructions :
               </div>
             )}
 
+            {/* ── Open Tonight AI panel ── */}
+            <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "16px 20px", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, color: "#8B2635" }}>🍷 QUE BOIRE CE SOIR ?</div>
+                  <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic", marginTop: 2 }}>Le sommelier choisit la meilleure bouteille de votre cave pour ce soir</div>
+                </div>
+                <button
+                  onClick={getOpenTonightAdvice}
+                  disabled={tonightLoading}
+                  style={{ ...btnP, opacity: tonightLoading ? 0.7 : 1, whiteSpace: "nowrap" }}>
+                  {tonightLoading ? "…" : "Demander"}
+                </button>
+              </div>
+              {(tonightLoading || tonightText || tonightError) && (
+                <div style={{ marginTop: 14, borderTop: "1px solid #EAE5DF", paddingTop: 14 }}>
+                  {tonightError
+                    ? <div style={{ color: "#C0392B", fontSize: 14 }}>⚠️ {tonightError}</div>
+                    : tonightLoading && !tonightText ? <LoadingSkeleton message="Le sommelier choisit votre bouteille…" />
+                    : <div>
+                        <p style={{ lineHeight: 1.8, fontSize: 15, color: "#4A3A2A", whiteSpace: "pre-wrap", margin: 0 }}>{tonightText}</p>
+                        {tonightLoading && <span style={{ color: "#B0A090", fontSize: 13, fontStyle: "italic" }}> ✍️</span>}
+                      </div>}
+                </div>
+              )}
+            </div>
+
             {showForm && (
               <div className="fade-in" style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 10, padding: 20, marginBottom: 16 }}>
                 <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 14 }}>✦ SAISIE MANUELLE</div>
@@ -1037,11 +1169,33 @@ Instructions :
               </div>
 
               <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "20px 22px" }}>
-                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>✦ CONSEIL DU SOMMELIER</div>
+                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                  ✦ CONSEIL DU SOMMELIER
+                  {adviceCache[selected.id] && !loading && (
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: "#B0A090", fontFamily: "'Cormorant Garamond',serif", fontStyle: "italic", letterSpacing: 0 }}>
+                      ✓ en cache · <button onClick={() => { setAdviceCache(c => { const n = {...c}; delete n[selected.id]; return n; }); getBottleAdvice(selected); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#5B8DD9", fontSize: 11, padding: 0, textDecoration: "underline" }}>Actualiser</button>
+                    </span>
+                  )}
+                </div>
                 {error
                   ? <div style={{ color: "#C0392B", fontSize: 15, padding: "12px 16px", background: "#FDF0EE", borderRadius: 7 }}>{error}</div>
-                  : loading ? <LoadingSkeleton />
-                  : aiText ? <p style={{ lineHeight: 1.85, fontSize: 16, color: "#4A3A2A", whiteSpace: "pre-wrap" }}>{aiText}</p>
+                  : loading && !aiText ? <LoadingSkeleton />
+                  : aiText ? (() => {
+                      const sections = parseSommelierText(aiText);
+                      const hasStructure = Object.keys(sections).length >= 2;
+                      if (!hasStructure) return <p style={{ lineHeight: 1.85, fontSize: 16, color: "#4A3A2A", whiteSpace: "pre-wrap" }}>{aiText}</p>;
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                          {SECTION_DEFS.map(({ key, label, icon }) => sections[key] ? (
+                            <div key={key} style={{ background: "#FAF7F3", borderRadius: 10, padding: "14px 16px", borderLeft: "3px solid #DDD8D0" }}>
+                              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#8B2635", marginBottom: 8 }}>{icon} {label}</div>
+                              <p style={{ lineHeight: 1.8, fontSize: 15, color: "#4A3A2A", whiteSpace: "pre-wrap", margin: 0 }}>{sections[key]}</p>
+                            </div>
+                          ) : null)}
+                          {loading && <div style={{ color: "#B0A090", fontSize: 13, fontStyle: "italic" }}>✍️ Le sommelier écrit…</div>}
+                        </div>
+                      );
+                    })()
                   : null}
               </div>
             </div>
