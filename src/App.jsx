@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 // Update this if Google releases a newer model ID
-const GEMINI_MODEL = "gemini-3.1-flash-lite-preview-06-17";
+const GEMINI_MODEL = "gemini-3.1-flash-lite";
 const STORAGE_KEY = "ma_cave_v2";
 
 // ── API key ───────────────────────────────────────────────────────────────────
