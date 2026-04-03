@@ -268,14 +268,49 @@ function estimateValue(wine) {
   return pricePerBottle * wine.quantity;
 }
 
+function VintageChart({ years, byYear }) {
+  const [hov, setHov] = useState(null);
+  if (!years.length) return <div style={{ color: "#B0A090", fontSize: 14, fontStyle: "italic" }}>Aucun millésime enregistré.</div>;
+  const maxQty = Math.max(...years.map(y => byYear[y]), 1);
+  const BAR = 26, GAP = 5, CH = 90;
+  const W = Math.max(years.length * (BAR + GAP) - GAP, 1);
+  const short = years.length > 12;
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`-4 0 ${W + 8} ${CH + 28}`} style={{ display: "block", width: "100%", minWidth: Math.min(W, 160) }}>
+        {years.map((yr, i) => {
+          const qty = byYear[yr];
+          const bH = Math.max(4, Math.round(qty / maxQty * CH));
+          const x = i * (BAR + GAP);
+          const isHov = hov === yr;
+          const midX = x + BAR / 2;
+          return (
+            <g key={yr} style={{ cursor: "default" }}
+               onMouseEnter={() => setHov(yr)} onMouseLeave={() => setHov(null)}>
+              <rect x={x} y={CH - bH} width={BAR} height={bH} rx={3}
+                fill={isHov ? "#8B2635" : "#C5A090"} style={{ transition: "fill 0.15s" }} />
+              {isHov && (
+                <g>
+                  <rect x={midX - 20} y={CH - bH - 22} width={40} height={17} rx={4} fill="#8B2635" />
+                  <text x={midX} y={CH - bH - 9} textAnchor="middle" fontSize={10} fill="#fff" fontWeight="600">{qty} btl</text>
+                </g>
+              )}
+              <text x={midX} y={CH + 18} textAnchor="middle" fontSize={9}
+                fill={isHov ? "#8B2635" : "#9A8A7A"} fontWeight={isHov ? "600" : "400"}>
+                {short ? `'${String(yr).slice(2)}` : yr}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 function StatsDashboard({ cellar }) {
   const totalBottles = cellar.reduce((s, w) => s + w.quantity, 0);
   const byType = {};
-  const byRegion = {};
-  cellar.forEach(w => {
-    byType[w.type] = (byType[w.type] || 0) + w.quantity;
-    byRegion[w.region] = (byRegion[w.region] || 0) + w.quantity;
-  });
+  cellar.forEach(w => { byType[w.type] = (byType[w.type] || 0) + w.quantity; });
   const statuses = { "Trop tôt": 0, "Jeune": 0, "Apogée": 0, "À boire vite": 0, "Passé": 0 };
   cellar.forEach(w => { const s = drinkingStatus(w); statuses[s.label] = (statuses[s.label] || 0) + w.quantity; });
   const statusColors = { "Trop tôt": "#5B8DD9", "Jeune": "#2E8B57", "Apogée": "#D4820A", "À boire vite": "#C0392B", "Passé": "#AAA" };
@@ -287,6 +322,24 @@ function StatsDashboard({ cellar }) {
     const rated = cellar.filter(w => w.rating);
     return rated.length ? Math.round(rated.reduce((s, w) => s + w.rating, 0) / rated.length) : null;
   })();
+
+  // Vintage distribution
+  const byYear = {};
+  cellar.forEach(w => { if (w.year) byYear[w.year] = (byYear[w.year] || 0) + w.quantity; });
+  const sortedYears = Object.keys(byYear).map(Number).sort((a, b) => a - b);
+
+  // Region with estimated value
+  const byRegionFull = {};
+  cellar.forEach(w => {
+    if (!byRegionFull[w.region]) byRegionFull[w.region] = { qty: 0, value: 0 };
+    byRegionFull[w.region].qty += w.quantity;
+    byRegionFull[w.region].value += estimateValue(w);
+  });
+  const regionsSorted = Object.entries(byRegionFull).sort((a, b) => b[1].qty - a[1].qty);
+  const maxRegionQty = Math.max(...regionsSorted.map(([, v]) => v.qty), 1);
+
+  // Top 5 rated wines
+  const top5 = [...cellar].filter(w => w.rating).sort((a, b) => b.rating - a.rating).slice(0, 5);
 
   return (
     <div className="fade-in">
@@ -318,6 +371,8 @@ function StatsDashboard({ cellar }) {
           </div>
         ))}
       </div>
+
+      {/* Type + maturity */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }} className="grid2">
         <div style={card}>
           <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>PAR TYPE</div>
@@ -355,18 +410,54 @@ function StatsDashboard({ cellar }) {
           })}
         </div>
       </div>
-      <div style={card}>
+
+      {/* Vintage distribution bar chart */}
+      <div style={{ ...card, marginBottom: 12 }}>
+        <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>MILLÉSIMES</div>
+        <VintageChart years={sortedYears} byYear={byYear} />
+      </div>
+
+      {/* Region bars with value */}
+      <div style={{ ...card, marginBottom: 12 }}>
         <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>PAR RÉGION</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {Object.entries(byRegion).sort((a,b)=>b[1]-a[1]).map(([region, qty]) => (
-            <div key={region} style={{ background: "#FAF5F0", borderRadius: 8, padding: "8px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <span style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1, color: "#8B2635" }}>{region}</span>
-              <span style={{ fontSize: 18, fontWeight: 600, fontFamily: "'Cormorant Garamond',serif", color: "#2A1F15" }}>{qty}</span>
-              <span style={{ fontSize: 11, color: "#B0A090" }}>btl</span>
+        {regionsSorted.map(([region, { qty, value }]) => {
+          const pct = Math.round(qty / maxRegionQty * 100);
+          return (
+            <div key={region} style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5, alignItems: "baseline" }}>
+                <span style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1, color: "#4A3A2A" }}>{region}</span>
+                <span style={{ fontSize: 13, color: "#9A8A7A" }}>
+                  {qty} btl{value > 0 ? ` · ~${value.toLocaleString("fr-FR")} €` : ""}
+                </span>
+              </div>
+              <div style={{ height: 8, background: "#F0EBE5", borderRadius: 4, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: "linear-gradient(90deg,#8B2635,#C5A090)", borderRadius: 4, transition: "width 0.6s ease" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Top 5 wines by rating */}
+      {top5.length > 0 && (
+        <div style={card}>
+          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>TOP 5 VINS</div>
+          {top5.map((wine, i) => (
+            <div key={wine.id} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: i < top5.length - 1 ? 12 : 0, paddingBottom: i < top5.length - 1 ? 12 : 0, borderBottom: i < top5.length - 1 ? "1px solid #F5F0EB" : "none" }}>
+              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 18, fontWeight: 600, color: i === 0 ? "#D4820A" : i === 1 ? "#9A8A7A" : i === 2 ? "#9A6A20" : "#C0B8B0", minWidth: 24, textAlign: "center" }}>
+                {i + 1}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 16, color: "#2A1F15", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{wine.name} {wine.year}</div>
+                <div style={{ fontSize: 13, color: "#9A8A7A" }}>{wine.appellation || wine.region}</div>
+              </div>
+              <div style={{ background: wine.rating >= 95 ? "#FDF4E0" : "#FAF7F3", border: `1.5px solid ${wine.rating >= 95 ? "#D4820A" : "#DDD8D0"}`, borderRadius: 8, padding: "4px 10px", fontFamily: "'Cinzel',serif", fontSize: 14, fontWeight: 600, color: wine.rating >= 95 ? "#D4820A" : "#6A5A4A", whiteSpace: "nowrap" }}>
+                {wine.rating}
+              </div>
             </div>
           ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }
