@@ -512,6 +512,9 @@ export default function WineCellar() {
   const [fRegion, setFRegion] = useState("Tous");
   const [fAppellation, setFAppellation] = useState("Tous");
   const [fStatus, setFStatus] = useState("Tous");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("default");
+  const [drinkTonight, setDrinkTonight] = useState(false);
 
   const [newWine, setNewWine] = useState({ name: "", year: "", region: "", appellation: "", type: "Rouge", grape: "", quantity: 1, drinkFrom: "", drinkUntil: "", notes: "" });
 
@@ -526,17 +529,39 @@ export default function WineCellar() {
   const types = ["Tous", ...Array.from(new Set(cellar.map(w => w.type))).sort()];
   const statuses = ["Tous", "Trop tôt", "Jeune", "Apogée", "À boire vite", "Passé"];
 
-  const filtered = cellar.filter(w => {
-    if (fType !== "Tous" && w.type !== fType) return false;
-    if (fRegion !== "Tous" && w.region !== fRegion) return false;
-    if (fAppellation !== "Tous" && w.appellation !== fAppellation) return false;
-    if (fStatus !== "Tous" && drinkingStatus(w).label !== fStatus) return false;
-    return true;
-  });
+  const MATURITY_ORDER = { "À boire vite": 0, "Apogée": 1, "Jeune": 2, "Trop tôt": 3, "Passé": 4 };
+
+  const filtered = cellar
+    .filter(w => {
+      if (fType !== "Tous" && w.type !== fType) return false;
+      if (fRegion !== "Tous" && w.region !== fRegion) return false;
+      if (fAppellation !== "Tous" && w.appellation !== fAppellation) return false;
+      if (drinkTonight) {
+        if (!["Apogée", "À boire vite"].includes(drinkingStatus(w).label)) return false;
+      } else if (fStatus !== "Tous" && drinkingStatus(w).label !== fStatus) return false;
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        if (![w.name, w.appellation, w.grape, w.notes, w.region].some(f => f && f.toLowerCase().includes(q))) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case "name":      return a.name.localeCompare(b.name);
+        case "year_asc":  return a.year - b.year;
+        case "year_desc": return b.year - a.year;
+        case "rating":    return (b.rating || 0) - (a.rating || 0);
+        case "quantity":  return b.quantity - a.quantity;
+        case "maturity":  return (MATURITY_ORDER[drinkingStatus(a).label] ?? 5) - (MATURITY_ORDER[drinkingStatus(b).label] ?? 5);
+        default:          return 0;
+      }
+    });
 
   const totalBottles = cellar.reduce((s, w) => s + w.quantity, 0);
   const readyNow = cellar.filter(w => ["Apogée", "À boire vite"].includes(drinkingStatus(w).label)).length;
-  const activeFilters = [fType, fRegion, fAppellation, fStatus].filter(f => f !== "Tous").length;
+  const activeFilters = [fType, fRegion, fAppellation, fStatus].filter(f => f !== "Tous").length
+    + (drinkTonight ? 1 : 0)
+    + (search.trim() ? 1 : 0);
 
   async function getBottleAdvice(wine) {
     setSelected(wine);
@@ -667,6 +692,65 @@ Instructions :
               );
             })}
           </nav>
+          {/* ── Sticky search + filter bar (only on cellar view) ── */}
+          {(view === "cellar" || view === "bottle") && (
+            <div style={{ padding: "10px 0", borderTop: "1px solid #F0EBE5", display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* Search row */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ flex: 1, position: "relative" }}>
+                  <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#B0A090", fontSize: 15, pointerEvents: "none" }}>🔍</span>
+                  <input
+                    style={{ width: "100%", background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 8, padding: "8px 12px 8px 34px", fontFamily: "'Cormorant Garamond',serif", fontSize: 15, color: "#2A1F15", outline: "none" }}
+                    placeholder="Rechercher un vin, cépage, appellation…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                  {search && (
+                    <button onClick={() => setSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#B0A090", fontSize: 16, lineHeight: 1 }}>✕</button>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowScan(true)}
+                  style={{ ...btnG, display: "flex", alignItems: "center", gap: 5, borderColor: "#C8D8F0", color: "#5B8DD9", flexShrink: 0 }}>
+                  📷 <span className="hide-sm">Scanner</span>
+                </button>
+                <button style={{ ...btnG, flexShrink: 0 }} onClick={() => setShowForm(s => !s)}>+ Saisir</button>
+              </div>
+              {/* Filter + sort row */}
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <FilterDropdown label="Type" value={fType} options={types} onChange={setFType} />
+                <FilterDropdown label="Région" value={fRegion} options={regions} onChange={v => { setFRegion(v); setFAppellation("Tous"); }} />
+                <FilterDropdown label="Appellation" value={fAppellation} options={appellations} onChange={setFAppellation} />
+                <FilterDropdown label="Maturité" value={fStatus} options={statuses} onChange={v => { setFStatus(v); setDrinkTonight(false); }} />
+                {/* Drink Tonight */}
+                <button
+                  onClick={() => { setDrinkTonight(d => !d); setFStatus("Tous"); }}
+                  style={{ display: "flex", alignItems: "center", gap: 5, background: drinkTonight ? "#FDF0EE" : "#fff", border: `1.5px solid ${drinkTonight ? "#C0392B" : "#DDD8D0"}`, borderRadius: 8, padding: "8px 13px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, color: drinkTonight ? "#C0392B" : "#6A5A4A", whiteSpace: "nowrap", transition: "all 0.15s" }}>
+                  🍷 Ce soir
+                </button>
+                {/* Sort */}
+                <select
+                  value={sortBy}
+                  onChange={e => setSortBy(e.target.value)}
+                  style={{ background: sortBy !== "default" ? "#FDF0F0" : "#fff", border: `1.5px solid ${sortBy !== "default" ? "#8B2635" : "#DDD8D0"}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, color: sortBy !== "default" ? "#8B2635" : "#6A5A4A", outline: "none" }}>
+                  <option value="default">Trier…</option>
+                  <option value="name">Nom A–Z</option>
+                  <option value="year_desc">Millésime ↓</option>
+                  <option value="year_asc">Millésime ↑</option>
+                  <option value="rating">Note ↓</option>
+                  <option value="quantity">Quantité ↓</option>
+                  <option value="maturity">Maturité</option>
+                </select>
+                {activeFilters > 0 && (
+                  <button
+                    style={{ ...btnG, color: "#8B2635", borderColor: "#C5A090", fontSize: 11 }}
+                    onClick={() => { setFType("Tous"); setFRegion("Tous"); setFAppellation("Tous"); setFStatus("Tous"); setDrinkTonight(false); setSearch(""); setSortBy("default"); }}>
+                    ✕ Tout effacer ({activeFilters})
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </header>
 
@@ -679,29 +763,10 @@ Instructions :
         {view === "cellar" && (
           <div className="fade-in">
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
-              <FilterDropdown label="Type" value={fType} options={types} onChange={setFType} />
-              <FilterDropdown label="Région" value={fRegion} options={regions} onChange={v => { setFRegion(v); setFAppellation("Tous"); }} />
-              <FilterDropdown label="Appellation" value={fAppellation} options={appellations} onChange={setFAppellation} />
-              <FilterDropdown label="Maturité" value={fStatus} options={statuses} onChange={setFStatus} />
-              {activeFilters > 0 && (
-                <button style={{ ...btnG, color: "#8B2635", borderColor: "#C5A090", fontSize: 12 }}
-                  onClick={() => { setFType("Tous"); setFRegion("Tous"); setFAppellation("Tous"); setFStatus("Tous"); }}>
-                  ✕ Effacer ({activeFilters})
-                </button>
-              )}
-              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                <button style={{ ...btnG, display: "flex", alignItems: "center", gap: 6, borderColor: "#C8D8F0", color: "#5B8DD9" }}
-                  onClick={() => setShowScan(true)}>
-                  📷 <span>Scanner</span>
-                </button>
-                <button style={btnG} onClick={() => setShowForm(s => !s)}>+ Saisir</button>
-              </div>
-            </div>
-
             {activeFilters > 0 && (
               <div style={{ color: "#9A8A7A", fontSize: 14, fontStyle: "italic", marginBottom: 10 }}>
                 {filtered.length} bouteille{filtered.length !== 1 ? "s" : ""} trouvée{filtered.length !== 1 ? "s" : ""}
+                {drinkTonight && <span style={{ marginLeft: 8, color: "#C0392B" }}>· À ouvrir ce soir</span>}
               </div>
             )}
 
