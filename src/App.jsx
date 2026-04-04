@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const STORAGE_KEY = "ma_cave_v2";
+const ONBOARDED_KEY = "ma_cave_onboarded";
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 // Sync path (localStorage + sessionStorage) — used for the instant initial render
@@ -306,6 +307,73 @@ Identifie toutes les bouteilles visibles sur cette photo. Retourne uniquement le
 }
 
 const SYS = `Tu es un expert en boissons premium — vins, champagnes, portos, sakés et spiritueux — de renommée mondiale. Tu réponds uniquement en français, avec précision et élégance. Sois concis mais complet. Pour les sakés, adapte tes conseils à leur nature (umami, température de service, accords japonais et fusion). Pour les portos, précise le style (ruby, tawny, vintage) et les accords fromages/desserts. Structure ta réponse avec des titres en majuscules suivis de deux-points.`;
+
+// ── OnboardingModal ───────────────────────────────────────────────────────────
+function OnboardingModal({ onStartFresh, onKeepSamples }) {
+  const [step, setStep] = useState(0); // 0 = welcome, 1 = choice made
+  const card = { background: "#fff", border: "1px solid #EAE5DF", borderRadius: 14, padding: "20px 22px" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(20,10,5,0.70)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div className="fade-in" style={{ background: "#F8F5F1", borderRadius: 20, width: "100%", maxWidth: 500, boxShadow: "0 32px 80px rgba(0,0,0,0.28)", overflow: "hidden" }}>
+        {/* Header */}
+        <div style={{ background: "#8B2635", padding: "28px 28px 22px", textAlign: "center" }}>
+          <div style={{ fontSize: 52, marginBottom: 10 }}>🍷</div>
+          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 22, fontWeight: 600, letterSpacing: 3, color: "#fff", marginBottom: 6 }}>MA CAVE</div>
+          <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 14, fontStyle: "italic" }}>Votre sommelier personnel propulsé par l'IA</div>
+        </div>
+
+        <div style={{ padding: "24px 28px 28px" }}>
+          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 2, color: "#8B2635", marginBottom: 8 }}>✦ BIENVENUE</div>
+          <p style={{ color: "#4A3A2A", fontSize: 16, lineHeight: 1.7, marginBottom: 20 }}>
+            Gérez votre cave, scannez vos étiquettes par photo et obtenez des conseils de dégustation personnalisés.
+          </p>
+
+          {/* Feature pills */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
+            {[
+              ["📷","Scan IA d'étiquettes"],
+              ["🤖","Conseils du sommelier"],
+              ["📊","Statistiques de cave"],
+              ["🛒","Liste d'achat"],
+              ["🔗","Partage & export"],
+            ].map(([icon, label]) => (
+              <div key={label} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#fff", border: "1px solid #EAE5DF", borderRadius: 20, padding: "5px 12px", fontSize: 13, color: "#4A3A2A" }}>
+                <span>{icon}</span><span style={{ fontFamily: "'Cormorant Garamond',serif" }}>{label}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>COMMENT COMMENCER ?</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <button
+              onClick={onStartFresh}
+              style={{ background: "#8B2635", color: "#fff", border: "none", borderRadius: 10, padding: "16px 20px", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 14, transition: "background 0.15s" }}
+              onMouseOver={e => e.currentTarget.style.background = "#A02A3F"}
+              onMouseOut={e => e.currentTarget.style.background = "#8B2635"}>
+              <span style={{ fontSize: 28 }}>🍾</span>
+              <div>
+                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1.5, marginBottom: 3 }}>COMMENCER MA CAVE</div>
+                <div style={{ fontSize: 13, opacity: 0.85, fontStyle: "italic" }}>Partir d'une cave vide et ajouter vos propres bouteilles</div>
+              </div>
+            </button>
+            <button
+              onClick={onKeepSamples}
+              style={{ background: "#fff", color: "#4A3A2A", border: "1.5px solid #DDD8D0", borderRadius: 10, padding: "16px 20px", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}
+              onMouseOver={e => { e.currentTarget.style.background = "#FAF7F3"; e.currentTarget.style.borderColor = "#C5A090"; }}
+              onMouseOut={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#DDD8D0"; }}>
+              <span style={{ fontSize: 28 }}>🔍</span>
+              <div>
+                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1.5, marginBottom: 3, color: "#6A5A4A" }}>EXPLORER AVEC DES EXEMPLES</div>
+                <div style={{ fontSize: 13, color: "#9A8A7A", fontStyle: "italic" }}>Découvrir l'application avec une cave de démonstration</div>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── FilterDropdown ────────────────────────────────────────────────────────────
 function FilterDropdown({ label, value, options, onChange }) {
@@ -1158,6 +1226,7 @@ export default function WineCellar() {
   const [showLog, setShowLog] = useState(false);
   const [pendingConsume, setPendingConsume] = useState(null);
   const [shareMode, setShareMode] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   // On mount: if localStorage was empty, check IndexedDB (survives iOS ITP better).
   // We must do this BEFORE the save effect runs so we don't overwrite real data
@@ -1168,6 +1237,11 @@ export default function WineCellar() {
       if (data && Array.isArray(data) && data.length > 0) {
         setCellar(data);
         saveCellarSync(data); // restore to localStorage as well
+      } else {
+        // Nothing in any storage — show onboarding if first visit
+        if (!localStorage.getItem(ONBOARDED_KEY)) {
+          setShowOnboarding(true);
+        }
       }
       setStorageReady(true);
     });
@@ -1196,6 +1270,15 @@ export default function WineCellar() {
 
   function showToast(message, undo) {
     setToast({ message, undo });
+  }
+
+  function completeOnboarding(startFresh) {
+    try { localStorage.setItem(ONBOARDED_KEY, "1"); } catch {}
+    if (startFresh) {
+      setCellar([]);
+      saveCellar([]);
+    }
+    setShowOnboarding(false);
   }
 
   function copyShareURL() {
@@ -1518,6 +1601,13 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
         @media print{.no-print,.bottom-nav,footer{display:none!important}.top-nav{display:none!important}header{position:relative!important}main{padding:8px!important;max-width:100%!important}body,#root>div{background:#fff!important}.wcard{break-inside:avoid;box-shadow:none!important}@page{margin:1.5cm;size:A4 portrait}}
       `}</style>
 
+      {showOnboarding && (
+        <OnboardingModal
+          onStartFresh={() => completeOnboarding(true)}
+          onKeepSamples={() => completeOnboarding(false)}
+        />
+      )}
+
       {showLog && pendingConsume && (
         <LogModal
           wine={pendingConsume}
@@ -1770,8 +1860,8 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
               </div>
             )}
 
-            {/* ── Open Tonight AI panel ── */}
-            <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "16px 20px", marginBottom: 16 }}>
+            {/* ── Open Tonight AI panel (hidden when cave is empty) ── */}
+            {cellar.length > 0 && <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "16px 20px", marginBottom: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                 <div>
                   <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, color: "#8B2635" }}>🍷 QUE BOIRE CE SOIR ?</div>
@@ -1795,7 +1885,7 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                       </div>}
                 </div>
               )}
-            </div>
+            </div>}
 
             {showForm && (
               <div className="fade-in" style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 10, padding: 20, marginBottom: 16 }}>
@@ -1831,7 +1921,49 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
               </div>
             )}
 
-            {filtered.length === 0 ? (
+            {cellar.length === 0 ? (
+              /* ── True empty cellar — first-use CTAs ── */
+              <div className="fade-in" style={{ textAlign: "center", padding: "40px 20px" }}>
+                <div style={{ fontSize: 64, marginBottom: 16 }}>🍾</div>
+                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 16, letterSpacing: 2, color: "#8B2635", marginBottom: 8 }}>VOTRE CAVE EST VIDE</div>
+                <p style={{ color: "#9A8A7A", fontSize: 15, fontStyle: "italic", marginBottom: 28, lineHeight: 1.6 }}>
+                  Commencez par scanner une étiquette, saisir une bouteille manuellement,<br className="hide-sm" /> ou importer un fichier existant.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 360, margin: "0 auto" }}>
+                  <button onClick={() => setShowScan(true)}
+                    style={{ background: "#8B2635", color: "#fff", border: "none", borderRadius: 10, padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, fontSize: 15, fontFamily: "'Cormorant Garamond',serif", transition: "background 0.15s" }}
+                    onMouseOver={e => e.currentTarget.style.background = "#A02A3F"}
+                    onMouseOut={e => e.currentTarget.style.background = "#8B2635"}>
+                    <span style={{ fontSize: 26 }}>📷</span>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1.5, marginBottom: 2 }}>SCANNER UNE ÉTIQUETTE</div>
+                      <div style={{ fontSize: 13, opacity: 0.85 }}>L'IA identifie votre vin automatiquement</div>
+                    </div>
+                  </button>
+                  <button onClick={() => setShowForm(true)}
+                    style={{ background: "#fff", color: "#4A3A2A", border: "1.5px solid #DDD8D0", borderRadius: 10, padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, fontSize: 15, fontFamily: "'Cormorant Garamond',serif", transition: "all 0.15s" }}
+                    onMouseOver={e => { e.currentTarget.style.background = "#FAF7F3"; e.currentTarget.style.borderColor = "#C5A090"; }}
+                    onMouseOut={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#DDD8D0"; }}>
+                    <span style={{ fontSize: 26 }}>✏️</span>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1.5, marginBottom: 2, color: "#6A5A4A" }}>SAISIE MANUELLE</div>
+                      <div style={{ fontSize: 13, color: "#9A8A7A" }}>Entrez les détails de votre bouteille</div>
+                    </div>
+                  </button>
+                  <label style={{ background: "#fff", color: "#4A3A2A", border: "1.5px solid #DDD8D0", borderRadius: 10, padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, fontSize: 15, fontFamily: "'Cormorant Garamond',serif", transition: "all 0.15s", position: "relative" }}
+                    onMouseOver={e => { e.currentTarget.style.background = "#FAF7F3"; e.currentTarget.style.borderColor = "#C5A090"; }}
+                    onMouseOut={e => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = "#DDD8D0"; }}>
+                    <span style={{ fontSize: 26 }}>⬆️</span>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1.5, marginBottom: 2, color: "#6A5A4A" }}>IMPORTER UN FICHIER</div>
+                      <div style={{ fontSize: 13, color: "#9A8A7A" }}>Reprenez une cave existante (JSON ou CSV)</div>
+                    </div>
+                    <input type="file" accept=".json,.csv" style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", fontSize: 0 }}
+                      onChange={e => { importWines(e.target.files[0]); e.target.value = ""; }} />
+                  </label>
+                </div>
+              </div>
+            ) : filtered.length === 0 ? (
               <div style={{ textAlign: "center", padding: "48px 20px", color: "#9A8A7A", fontStyle: "italic" }}>Aucun vin ne correspond à ces filtres.</div>
             ) : filtered.map(wine => {
               const st = drinkingStatus(wine);
