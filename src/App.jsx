@@ -66,6 +66,15 @@ function saveCellar(cellar) {
 // Keep loadCellar as an alias used by share-mode reset
 function loadCellar() { return loadCellarSync(); }
 
+// ── Wishlist persistence (localStorage only — lower priority than cellar) ──────
+const WISHLIST_KEY = "ma_cave_wishlist";
+function loadWishlist() {
+  try { return JSON.parse(localStorage.getItem(WISHLIST_KEY) || "[]"); } catch { return []; }
+}
+function saveWishlist(list) {
+  try { localStorage.setItem(WISHLIST_KEY, JSON.stringify(list)); } catch {}
+}
+
 // ── Sample data ───────────────────────────────────────────────────────────────
 const SAMPLE_CELLAR = [
   { id: 1, name: "Château Margaux", year: 2015, region: "Bordeaux", appellation: "Médoc", type: "Rouge", grape: "Cabernet Sauvignon", quantity: 6, drinkFrom: 2022, drinkUntil: 2045, rating: 98, notes: "Grand Cru Classé" },
@@ -419,6 +428,10 @@ function StatsDashboard({ cellar }) {
     const rated = cellar.filter(w => w.rating);
     return rated.length ? Math.round(rated.reduce((s, w) => s + w.rating, 0) / rated.length) : null;
   })();
+  const totalCostPaid = cellar.reduce((s, w) =>
+    s + (w.pricePaid ? parseFloat(w.pricePaid) * w.quantity : 0), 0
+  );
+  const gainLoss = totalCostPaid > 0 && totalValue > 0 ? totalValue - totalCostPaid : null;
 
   // Vintage distribution
   const byYear = {};
@@ -468,6 +481,25 @@ function StatsDashboard({ cellar }) {
           </div>
         ))}
       </div>
+      {/* Price paid + gain/loss row (only if some pricePaid data exists) */}
+      {totalCostPaid > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }} className="grid2">
+          <div style={{ ...card, textAlign: "center" }}>
+            <div style={{ fontSize: 22, marginBottom: 4 }}>💸</div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 20, fontWeight: 600, color: "#3A5A9A" }}>{totalCostPaid.toLocaleString("fr-FR")} €</div>
+            <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic" }}>prix d'achat total</div>
+          </div>
+          {gainLoss !== null && (
+            <div style={{ ...card, textAlign: "center" }}>
+              <div style={{ fontSize: 22, marginBottom: 4 }}>{gainLoss >= 0 ? "📈" : "📉"}</div>
+              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 20, fontWeight: 600, color: gainLoss >= 0 ? "#2E8B57" : "#C0392B" }}>
+                {gainLoss >= 0 ? "+" : ""}{Math.round(gainLoss).toLocaleString("fr-FR")} €
+              </div>
+              <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic" }}>plus-value estimée</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Type + maturity */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }} className="grid2">
@@ -596,7 +628,10 @@ function EditModal({ wine, onSave, onClose }) {
             <input style={inp} placeholder="Boire à partir de" value={form.drinkFrom} onChange={e => setForm(p => ({ ...p, drinkFrom: e.target.value }))} />
             <input style={inp} placeholder="Boire avant" value={form.drinkUntil} onChange={e => setForm(p => ({ ...p, drinkUntil: e.target.value }))} />
           </div>
-          <input style={{ ...inp, marginBottom: 16 }} placeholder="Notes" value={form.notes || ""} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+            <input style={inp} placeholder="Notes" value={form.notes || ""} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} />
+            <input style={inp} placeholder="Prix payé (€/btl)" type="number" min="0" step="0.01" value={form.pricePaid || ""} onChange={e => setForm(p => ({ ...p, pricePaid: e.target.value }))} />
+          </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button onClick={handleSave} style={{ flex: 1, background: "#8B2635", color: "#fff", border: "none", borderRadius: 7, padding: "12px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1.5 }}>
               Enregistrer
@@ -980,7 +1015,10 @@ export default function WineCellar() {
   const [sortBy, setSortBy] = useState("default");
   const [drinkTonight, setDrinkTonight] = useState(false);
 
-  const [newWine, setNewWine] = useState({ name: "", year: "", region: "", appellation: "", type: "Rouge", grape: "", quantity: 1, drinkFrom: "", drinkUntil: "", notes: "" });
+  const [newWine, setNewWine] = useState({ name: "", year: "", region: "", appellation: "", type: "Rouge", grape: "", quantity: 1, drinkFrom: "", drinkUntil: "", notes: "", pricePaid: "" });
+  const [wishlist, setWishlist] = useState(() => loadWishlist());
+  const [showWishForm, setShowWishForm] = useState(false);
+  const [newWish, setNewWish] = useState({ name: "", year: "", region: "", type: "Rouge", notes: "", priority: "normale" });
   const [formErrors, setFormErrors] = useState({});
 
   const [pairingText, setPairingText] = useState("");
@@ -1028,6 +1066,8 @@ export default function WineCellar() {
     if (shareMode || !storageReady) return;
     saveCellar(cellar);
   }, [cellar, shareMode, storageReady]);
+
+  useEffect(() => { saveWishlist(wishlist); }, [wishlist]);
 
   function showToast(message, undo) {
     setToast({ message, undo });
@@ -1239,6 +1279,31 @@ Instructions :
     showToast(`"${wine.name} ${wine.year}" supprimé`, () => setCellar(p => [...p, wine]));
   }
 
+  function addToWishlist() {
+    if (!newWish.name.trim()) return;
+    setWishlist(p => [...p, { ...newWish, id: Date.now(), name: newWish.name.trim() }]);
+    setNewWish({ name: "", year: "", region: "", type: "Rouge", notes: "", priority: "normale" });
+    setShowWishForm(false);
+    showToast("Vin ajouté à la liste d'achat ✓");
+  }
+
+  function removeFromWishlist(id) {
+    const item = wishlist.find(w => w.id === id);
+    setWishlist(p => p.filter(w => w.id !== id));
+    showToast(`"${item.name}" retiré de la liste`, () => setWishlist(p => [...p, item]));
+  }
+
+  function buyWishlistItem(item) {
+    const y = parseInt(item.year) || CY;
+    setCellar(p => [...p, {
+      id: Date.now(), name: item.name, year: y, region: item.region || "",
+      appellation: "", type: item.type || "Rouge", grape: "", quantity: 1,
+      drinkFrom: y + 2, drinkUntil: y + 12, rating: null, notes: item.notes || "",
+    }]);
+    setWishlist(p => p.filter(w => w.id !== item.id));
+    showToast(`"${item.name}" ajouté à la cave ✓`);
+  }
+
   function importWines(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -1341,7 +1406,7 @@ Instructions :
             </div>
           </div>
           <nav className="top-nav" style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
-            {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"]].map(([v, label]) => {
+            {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"],["wishlist","Liste d'achat"]].map(([v, label]) => {
               const active = view === v || (view === "bottle" && v === "cellar");
               return (
                 <button key={v} onClick={() => setView(v)}
@@ -1512,7 +1577,10 @@ Instructions :
                     {formErrors.drinkUntil && <div style={{ color: "#C0392B", fontSize: 12, marginTop: 3 }}>{formErrors.drinkUntil}</div>}
                   </div>
                 </div>
-                <input style={{ ...inp, marginBottom: 14 }} placeholder="Notes" value={newWine.notes} onChange={e => setNewWine(p => ({ ...p, notes: e.target.value }))} />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }} className="grid2">
+                  <input style={inp} placeholder="Notes" value={newWine.notes} onChange={e => setNewWine(p => ({ ...p, notes: e.target.value }))} />
+                  <input style={inp} placeholder="Prix payé (€/btl)" type="number" min="0" step="0.01" value={newWine.pricePaid} onChange={e => setNewWine(p => ({ ...p, pricePaid: e.target.value }))} />
+                </div>
                 <div style={{ display: "flex", gap: 10 }}>
                   <button style={btnP} onClick={addWine}>Ajouter à la cave</button>
                   <button style={btnG} onClick={() => { setShowForm(false); setFormErrors({}); }}>Annuler</button>
@@ -1616,11 +1684,12 @@ Instructions :
                 <hr style={{ border: "none", borderTop: "1px solid #EAE5DF", margin: "14px 0" }} />
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                   {[
-                    [st.bg, st.color, `${st.icon} ${st.label}`],
-                    ["#FAF5F0", "#6A5A4A", `📅 ${selected.drinkFrom}–${selected.drinkUntil}`],
-                    ...(selected.rating ? [["#FDF8EE", "#D4820A", `⭐ ${selected.rating}/100`]] : []),
-                  ].map(([bg, color, text], i) => (
-                    <div key={i} style={{ background: bg, borderRadius: 7, padding: "6px 14px", fontSize: 14, color, fontWeight: i === 2 ? 600 : 400 }}>{text}</div>
+                    [st.bg, st.color, `${st.icon} ${st.label}`, false],
+                    ["#FAF5F0", "#6A5A4A", `📅 ${selected.drinkFrom}–${selected.drinkUntil}`, false],
+                    ...(selected.rating ? [["#FDF8EE", "#D4820A", `⭐ ${selected.rating}/100`, true]] : []),
+                    ...(selected.pricePaid ? [["#F0F5FD", "#3A5A9A", `💸 ${parseFloat(selected.pricePaid).toLocaleString("fr-FR")} €/btl`, false]] : []),
+                  ].map(([bg, color, text, bold], i) => (
+                    <div key={i} style={{ background: bg, borderRadius: 7, padding: "6px 14px", fontSize: 14, color, fontWeight: bold ? 600 : 400 }}>{text}</div>
                   ))}
                   <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, background: "#FAF5F0", borderRadius: 8, padding: "6px 14px", border: "1px solid #EAE5DF" }}>
                     <button
@@ -1756,11 +1825,97 @@ Instructions :
             )}
           </div>
         )}
+        {/* ── WISHLIST ─────────────────────────────────────── */}
+        {view === "wishlist" && (
+          <div className="fade-in">
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 4 }}>✦ LISTE D'ACHAT</div>
+            <p style={{ color: "#9A8A7A", fontStyle: "italic", fontSize: 15, marginBottom: 20 }}>
+              Notez les vins que vous souhaitez acquérir — cliquez sur "J'ai acheté" pour les ajouter directement à votre cave.
+            </p>
+
+            {/* Add wish form toggle */}
+            <button
+              style={{ ...btnP, marginBottom: 16 }}
+              onClick={() => setShowWishForm(s => !s)}>
+              {showWishForm ? "Annuler" : "+ Ajouter un vin"}
+            </button>
+
+            {showWishForm && (
+              <div className="fade-in" style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 10, padding: 20, marginBottom: 16 }}>
+                <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, color: "#8B2635", marginBottom: 14 }}>NOUVEAU VIN À ACQUÉRIR</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }} className="grid2">
+                  <input style={inp} placeholder="Nom du vin *" value={newWish.name} onChange={e => setNewWish(p => ({ ...p, name: e.target.value }))} />
+                  <input style={inp} placeholder="Millésime" value={newWish.year} onChange={e => setNewWish(p => ({ ...p, year: e.target.value }))} />
+                  <input style={inp} placeholder="Région" value={newWish.region} onChange={e => setNewWish(p => ({ ...p, region: e.target.value }))} />
+                  <select style={inp} value={newWish.type} onChange={e => setNewWish(p => ({ ...p, type: e.target.value }))}>
+                    {ALL_TYPES.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }} className="grid2">
+                  <input style={inp} placeholder="Notes / source" value={newWish.notes} onChange={e => setNewWish(p => ({ ...p, notes: e.target.value }))} />
+                  <select style={inp} value={newWish.priority} onChange={e => setNewWish(p => ({ ...p, priority: e.target.value }))}>
+                    <option value="urgente">🔴 Urgente</option>
+                    <option value="haute">🟠 Haute</option>
+                    <option value="normale">🟡 Normale</option>
+                    <option value="basse">🟢 Basse</option>
+                  </select>
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button style={btnP} onClick={addToWishlist}>Ajouter à la liste</button>
+                  <button style={btnG} onClick={() => setShowWishForm(false)}>Annuler</button>
+                </div>
+              </div>
+            )}
+
+            {wishlist.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "48px 20px", color: "#9A8A7A", fontStyle: "italic" }}>
+                Votre liste d'achat est vide.<br />Ajoutez des vins que vous souhaitez acquérir.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {wishlist.map(item => {
+                  const tc = TYPE_CONFIG[item.type] || TYPE_CONFIG.Rouge;
+                  const priorityLabel = { urgente: "🔴 Urgente", haute: "🟠 Haute", normale: "🟡 Normale", basse: "🟢 Basse" }[item.priority] || "🟡 Normale";
+                  return (
+                    <div key={item.id} style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 10, padding: "14px 16px" }}>
+                      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                        <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: tc.color, flexShrink: 0, marginTop: 2 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "3px 10px", marginBottom: 4 }}>
+                            <span style={{ fontSize: 17, fontWeight: 600 }}>{item.name}</span>
+                            {item.year && <span style={{ color: "#8A7A6A", fontSize: 15, fontStyle: "italic" }}>{item.year}</span>}
+                            <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: tc.pill, color: tc.color }}>{item.type}</span>
+                            <span style={{ fontSize: 12, color: "#9A8A7A" }}>{priorityLabel}</span>
+                          </div>
+                          {item.region && <div style={{ color: "#9A8A7A", fontSize: 14, marginBottom: 4 }}>{item.region}</div>}
+                          {item.notes && <div style={{ color: "#B0A090", fontSize: 13, fontStyle: "italic" }}>{item.notes}</div>}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                          <button
+                            onClick={() => buyWishlistItem(item)}
+                            style={{ background: "#2E8B57", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 1, whiteSpace: "nowrap" }}>
+                            ✓ Acheté
+                          </button>
+                          <button
+                            onClick={() => removeFromWishlist(item.id)}
+                            style={{ background: "#fff", color: "#C0392B", border: "1.5px solid #EAE5DF", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 1 }}>
+                            Retirer
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
       </main>
 
       {/* ── MOBILE BOTTOM NAV ── */}
       <nav className="bottom-nav">
-        {[["cellar","🍾","Cave"],["stats","📊","Stats"],["pairing","🍽️","Accords"]].map(([v, icon, label]) => {
+        {[["cellar","🍾","Cave"],["stats","📊","Stats"],["pairing","🍽️","Accords"],["wishlist","🛒","Liste"]].map(([v, icon, label]) => {
           const active = view === v || (view === "bottle" && v === "cellar");
           return (
             <button key={v} onClick={() => setView(v)}
