@@ -86,7 +86,11 @@ const TYPE_CONFIG = {
   Champagne: { color: "#9A7A10", pill: "#F5EAA0", accent: "#C8A020" },
   Liquoreux: { color: "#B07020", pill: "#F5DFA0", accent: "#D4900A" },
   Rosé:      { color: "#C05070", pill: "#FAD0E0", accent: "#E06080" },
+  Porto:     { color: "#7A1A3A", pill: "#F0D0E0", accent: "#A02050" },
+  Saké:      { color: "#3A6A5A", pill: "#D5EEE8", accent: "#2A7A6A" },
 };
+
+const ALL_TYPES = ["Rouge","Blanc","Rosé","Champagne","Liquoreux","Porto","Saké"];
 
 const CY = new Date().getFullYear();
 
@@ -225,6 +229,31 @@ function compressImage(file) {
   });
 }
 
+// Compress image to a data URL (for label photo storage — smaller than scan quality)
+function compressToDataURL(file, maxPx = 600, quality = 0.78) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Impossible de lire le fichier."));
+    reader.onload = e => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Format d'image non supporté."));
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxPx || height > maxPx) {
+          if (width > height) { height = Math.round(height * maxPx / width); width = maxPx; }
+          else { width = Math.round(width * maxPx / height); height = maxPx; }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 // Robust JSON extraction — handles preamble text, code fences, and partial wrapping
 function extractJSON(raw) {
   let clean = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
@@ -248,13 +277,15 @@ async function analyzeBottlePhoto(base64Data, mediaType = "image/jpeg") {
 Réponds UNIQUEMENT avec du JSON valide, sans markdown, sans backticks, sans commentaires.
 Le JSON doit être un tableau d'objets avec exactement ces clés :
 name, year, region, appellation, type, grape, quantity, drinkFrom, drinkUntil, rating, notes
-- type doit être l'un de: Rouge, Blanc, Rosé, Champagne, Liquoreux
+- type doit être l'un de: Rouge, Blanc, Rosé, Champagne, Liquoreux, Porto, Saké
 - year, quantity, drinkFrom, drinkUntil doivent être des entiers
 - rating peut être null si inconnu
-- Pour drinkFrom et drinkUntil, estime une fenêtre réaliste selon le vin
+- Pour drinkFrom et drinkUntil, estime une fenêtre réaliste : les sakés se boivent généralement dans les 2 ans, les portos vintage peuvent vieillir 20-40 ans
+- Pour les sakés: utilise grape "Riz" et région "Japon" si non précisées
+- Pour les portos: utilise région "Porto / Douro" si non précisée
 - quantity vaut 1 par défaut (sauf si plusieurs bouteilles visibles)
 - notes peut être vide ""
-Identifie tous les vins visibles sur cette photo. Retourne uniquement le tableau JSON.`,
+Identifie toutes les bouteilles visibles sur cette photo. Retourne uniquement le tableau JSON.`,
     }),
   });
   if (!res.ok) {
@@ -265,7 +296,7 @@ Identifie tous les vins visibles sur cette photo. Retourne uniquement le tableau
   return extractJSON(data.text);
 }
 
-const SYS = `Tu es un sommelier expert de renommée mondiale. Tu réponds uniquement en français, avec précision et élégance. Sois concis mais complet. Structure ta réponse avec des titres en majuscules suivis de deux-points.`;
+const SYS = `Tu es un expert en boissons premium — vins, champagnes, portos, sakés et spiritueux — de renommée mondiale. Tu réponds uniquement en français, avec précision et élégance. Sois concis mais complet. Pour les sakés, adapte tes conseils à leur nature (umami, température de service, accords japonais et fusion). Pour les portos, précise le style (ruby, tawny, vintage) et les accords fromages/desserts. Structure ta réponse avec des titres en majuscules suivis de deux-points.`;
 
 // ── FilterDropdown ────────────────────────────────────────────────────────────
 function FilterDropdown({ label, value, options, onChange }) {
@@ -315,8 +346,23 @@ function LoadingSkeleton({ message = "Le sommelier consulte votre cave…" }) {
 function estimateValue(wine) {
   if (!wine.rating || wine.quantity <= 0) return 0;
   const r = wine.rating;
-  let pricePerBottle = r >= 98 ? 300 : r >= 95 ? 120 : r >= 92 ? 50 : r >= 89 ? 25 : 12;
-  return pricePerBottle * wine.quantity;
+  // Base price per bottle from rating (more realistic market brackets)
+  let base;
+  if      (r >= 99) base = 800;
+  else if (r >= 97) base = 350;
+  else if (r >= 95) base = 160;
+  else if (r >= 93) base = 80;
+  else if (r >= 91) base = 40;
+  else if (r >= 89) base = 22;
+  else if (r >= 86) base = 14;
+  else              base = 8;
+  // Region multiplier (prestigious appellations command higher prices)
+  const regionMult = { "Bourgogne": 2.0, "Bordeaux": 1.5, "Champagne": 1.6, "Rhône": 1.1, "Alsace": 0.9 };
+  const rm = regionMult[wine.region] || 1.0;
+  // Type multiplier
+  const typeMult = { "Champagne": 1.4, "Liquoreux": 1.3, "Porto": 0.85, "Saké": 1.0, "Rosé": 0.8 };
+  const tm = typeMult[wine.type] || 1.0;
+  return Math.round(base * rm * tm) * wine.quantity;
 }
 
 function VintageChart({ years, byYear }) {
@@ -544,7 +590,7 @@ function EditModal({ wine, onSave, onClose }) {
               <input key={key} style={inp} placeholder={ph} value={form[key] || ""} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))} />
             ))}
             <select style={{ ...inp }} value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value }))}>
-              {["Rouge", "Blanc", "Rosé", "Champagne", "Liquoreux"].map(t => <option key={t}>{t}</option>)}
+              {ALL_TYPES.map(t => <option key={t}>{t}</option>)}
             </select>
             <input style={inp} placeholder="Quantité" type="number" min="0" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
             <input style={inp} placeholder="Boire à partir de" value={form.drinkFrom} onChange={e => setForm(p => ({ ...p, drinkFrom: e.target.value }))} />
@@ -569,24 +615,23 @@ function EditModal({ wine, onSave, onClose }) {
 function ScanModal({ onClose, onAdd, cellar = [] }) {
   const [phase, setPhase] = useState("idle");
   const [preview, setPreview] = useState(null);
+  const [previews, setPreviews] = useState([]);
+  const [progress, setProgress] = useState("");
   const [detected, setDetected] = useState([]);
   const [selected, setSelected] = useState({});
   const [errorMsg, setErrorMsg] = useState("");
 
   async function processFile(file) {
     if (!file) return;
-    setPhase("scanning");
-    setPreview(null);
-    setErrorMsg("");
+    setPhase("scanning"); setPreview(null); setPreviews([]); setErrorMsg("");
+    setProgress("Analyse de l'étiquette…");
     try {
       const { base64, mediaType, previewUrl } = await compressImage(file);
       setPreview(previewUrl);
       const wines = await analyzeBottlePhoto(base64, mediaType);
-      if (!wines || wines.length === 0) throw new Error("Aucun vin détecté. Essayez de photographier l'étiquette de plus près.");
+      if (!wines || wines.length === 0) throw new Error("Aucune bouteille détectée. Essayez de photographier l'étiquette de plus près.");
       setDetected(wines);
-      const sel = {};
-      wines.forEach((_, i) => { sel[i] = true; });
-      setSelected(sel);
+      const sel = {}; wines.forEach((_, i) => { sel[i] = true; }); setSelected(sel);
       setPhase("confirm");
     } catch (err) {
       setErrorMsg(err.message || "Erreur lors de l'analyse.");
@@ -594,20 +639,43 @@ function ScanModal({ onClose, onAdd, cellar = [] }) {
     }
   }
 
-  function confirmAdd() {
-    const toAdd = detected.filter((_, i) => selected[i]).map(w => ({
-      ...w,
-      id: Date.now() + Math.random(),
-      year: parseInt(w.year) || CY,
-      quantity: parseInt(w.quantity) || 1,
-      drinkFrom: parseInt(w.drinkFrom) || CY + 2,
-      drinkUntil: parseInt(w.drinkUntil) || CY + 15,
-    }));
-    onAdd(toAdd);
-    onClose();
+  async function processMultiple(files) {
+    const arr = Array.from(files);
+    if (arr.length === 0) return;
+    if (arr.length === 1) { processFile(arr[0]); return; }
+    setPhase("scanning"); setPreview(null); setPreviews([]); setErrorMsg("");
+    const allWines = [], allPreviews = [];
+    let hadError = false;
+    for (let i = 0; i < arr.length; i++) {
+      setProgress(`Analyse photo ${i + 1} / ${arr.length}…`);
+      try {
+        const { base64, mediaType, previewUrl } = await compressImage(arr[i]);
+        allPreviews.push(previewUrl);
+        if (i === 0) setPreview(previewUrl);
+        const wines = await analyzeBottlePhoto(base64, mediaType);
+        if (wines?.length) allWines.push(...wines);
+      } catch { hadError = true; }
+    }
+    setPreviews(allPreviews);
+    if (allWines.length === 0) {
+      setErrorMsg(hadError ? "Aucune bouteille détectée. Vérifiez la qualité des photos." : "Aucune bouteille détectée dans les photos sélectionnées.");
+      setPhase("error"); return;
+    }
+    setDetected(allWines);
+    const sel = {}; allWines.forEach((_, i) => { sel[i] = true; }); setSelected(sel);
+    setPhase("confirm");
   }
 
-  function reset() { setPhase("idle"); setPreview(null); setDetected([]); }
+  function confirmAdd() {
+    const toAdd = detected.filter((_, i) => selected[i]).map(w => ({
+      ...w, id: Date.now() + Math.random(),
+      year: parseInt(w.year) || CY, quantity: parseInt(w.quantity) || 1,
+      drinkFrom: parseInt(w.drinkFrom) || CY + 2, drinkUntil: parseInt(w.drinkUntil) || CY + 15,
+    }));
+    onAdd(toAdd); onClose();
+  }
+
+  function reset() { setPhase("idle"); setPreview(null); setPreviews([]); setDetected([]); setProgress(""); }
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -615,8 +683,8 @@ function ScanModal({ onClose, onAdd, cellar = [] }) {
       <div className="fade-in" style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 520, maxHeight: "90vh", overflow: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.18)" }}>
         <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid #EAE5DF", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 14, letterSpacing: 3, color: "#8B2635" }}>📷 SCANNER UNE BOUTEILLE</div>
-            <div style={{ color: "#9A8A7A", fontSize: 14, fontStyle: "italic", marginTop: 3 }}>Prenez en photo l'étiquette ou la bouteille</div>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 14, letterSpacing: 3, color: "#8B2635" }}>📷 SCANNER DES BOUTEILLES</div>
+            <div style={{ color: "#9A8A7A", fontSize: 14, fontStyle: "italic", marginTop: 3 }}>Photo unique ou sélection multiple depuis la galerie</div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A8A7A", fontSize: 20 }}>✕</button>
         </div>
@@ -633,38 +701,45 @@ function ScanModal({ onClose, onAdd, cellar = [] }) {
                   <div style={{ color: "#9A8A7A", fontSize: 13, marginTop: 4, fontStyle: "italic", pointerEvents: "none" }}>Appareil photo</div>
                 </label>
                 <label style={{ background: "#F5F8FD", border: "2px solid #C8D8F0", borderRadius: 12, padding: "28px 16px", cursor: "pointer", textAlign: "center", display: "block", position: "relative", overflow: "hidden" }}>
-                  <input type="file" accept="image/*"
+                  <input type="file" accept="image/*" multiple
                     style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", fontSize: 0 }}
-                    onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) processFile(f); }} />
+                    onChange={e => { const files = e.target.files; e.target.value = ""; if (files?.length) processMultiple(files); }} />
                   <div style={{ fontSize: 40, marginBottom: 10, pointerEvents: "none" }}>🖼️</div>
-                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1, color: "#5B8DD9", pointerEvents: "none" }}>Choisir une image</div>
-                  <div style={{ color: "#9A8A7A", fontSize: 13, marginTop: 4, fontStyle: "italic", pointerEvents: "none" }}>Depuis la galerie</div>
+                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1, color: "#5B8DD9", pointerEvents: "none" }}>Choisir des photos</div>
+                  <div style={{ color: "#9A8A7A", fontSize: 13, marginTop: 4, fontStyle: "italic", pointerEvents: "none" }}>Sélection multiple</div>
                 </label>
               </div>
               <div style={{ background: "#FAF7F3", borderRadius: 8, padding: "12px 16px", color: "#9A8A7A", fontSize: 14, fontStyle: "italic", textAlign: "center" }}>
-                💡 Photographiez l'étiquette de face pour une meilleure reconnaissance
+                💡 Photographiez l'étiquette de face · Sélectionnez plusieurs photos pour scanner plusieurs bouteilles à la fois
               </div>
             </div>
           )}
 
           {phase === "scanning" && (
             <div>
-              {preview && <img src={preview} alt="aperçu" style={{ width: "100%", maxHeight: 240, objectFit: "contain", borderRadius: 8, marginBottom: 20, background: "#FAF7F3" }} />}
-              <LoadingSkeleton message="L'IA analyse votre étiquette…" />
+              {preview && <img src={preview} alt="aperçu" style={{ width: "100%", maxHeight: 200, objectFit: "contain", borderRadius: 8, marginBottom: 20, background: "#FAF7F3" }} />}
+              <LoadingSkeleton message={progress || "L'IA analyse votre étiquette…"} />
             </div>
           )}
 
           {phase === "confirm" && (
             <div>
-              {preview && <img src={preview} alt="aperçu" style={{ width: "100%", maxHeight: 180, objectFit: "contain", borderRadius: 8, marginBottom: 16, background: "#FAF7F3" }} />}
+              {previews.length > 1 ? (
+                <div style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 16, paddingBottom: 4 }}>
+                  {previews.map((src, i) => (
+                    <img key={i} src={src} alt={`photo ${i + 1}`} style={{ height: 72, width: 54, objectFit: "cover", borderRadius: 6, flexShrink: 0, border: "1px solid #EAE5DF" }} />
+                  ))}
+                </div>
+              ) : preview ? (
+                <img src={preview} alt="aperçu" style={{ width: "100%", maxHeight: 160, objectFit: "contain", borderRadius: 8, marginBottom: 16, background: "#FAF7F3" }} />
+              ) : null}
               <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 2, color: "#2E8B57", marginBottom: 12 }}>
-                ✓ {detected.length} vin{detected.length > 1 ? "s" : ""} identifié{detected.length > 1 ? "s" : ""}
+                ✓ {detected.length} bouteille{detected.length > 1 ? "s" : ""} identifiée{detected.length > 1 ? "s" : ""}
               </div>
               {detected.map((wine, i) => {
                 const tc = TYPE_CONFIG[wine.type] || TYPE_CONFIG.Rouge;
                 const isDupe = cellar.some(w =>
-                  w.name.trim().toLowerCase() === String(wine.name || "").trim().toLowerCase() &&
-                  w.year === parseInt(wine.year)
+                  norm(w.name) === norm(String(wine.name || "")) && w.year === parseInt(wine.year)
                 );
                 return (
                   <div key={i} style={{ background: selected[i] ? "#FDFBF8" : "#F5F5F5", border: `1.5px solid ${isDupe ? "#E8D8A0" : selected[i] ? "#C5A090" : "#E0E0E0"}`, borderRadius: 10, padding: "14px 16px", marginBottom: 10, cursor: "pointer" }}
@@ -675,7 +750,7 @@ function ScanModal({ onClose, onAdd, cellar = [] }) {
                           <span style={{ fontWeight: 600, fontSize: 17 }}>{wine.name}</span>
                           <span style={{ color: "#8A7A6A", fontStyle: "italic" }}>{wine.year}</span>
                           <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: tc.pill, color: tc.color }}>{wine.type}</span>
-                          {isDupe && <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: "#FDF8EE", color: "#D4820A", border: "1px solid #E8D8A0" }}>⚠️ Doublon</span>}
+                          {isDupe && <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: "#FDF8EE", color: "#D4820A", border: "1px solid #E8D8A0" }}>⚠️ Déjà en cave → quantité +{parseInt(wine.quantity) || 1}</span>}
                         </div>
                         <div style={{ color: "#9A8A7A", fontSize: 14 }}>
                           {wine.appellation && <>{wine.appellation} · </>}{wine.region}{wine.grape ? ` · ${wine.grape}` : ""}
@@ -1129,6 +1204,16 @@ Instructions :
     setSelected(updated);
   }
 
+  async function uploadLabelPhoto(file, wine) {
+    if (!file) return;
+    try {
+      const dataUrl = await compressToDataURL(file, 600, 0.78);
+      updateWine({ ...wine, labelPhoto: dataUrl });
+    } catch (err) {
+      showToast("Impossible de charger la photo : " + err.message);
+    }
+  }
+
   function consumeBottle(wine) {
     if (wine.quantity <= 0) return;
     setPendingConsume(wine);
@@ -1208,8 +1293,27 @@ Instructions :
         />
       )}
       {showScan && <ScanModal onClose={() => setShowScan(false)} cellar={cellar} onAdd={(wines) => {
-        setCellar(p => [...p, ...wines]);
-        showToast(`${wines.length} vin${wines.length > 1 ? "s" : ""} ajouté${wines.length > 1 ? "s" : ""} ✓`);
+        let added = 0, merged = 0;
+        setCellar(prev => {
+          const updated = [...prev];
+          wines.forEach(w => {
+            const dupeIdx = updated.findIndex(e =>
+              norm(e.name) === norm(String(w.name || "")) && e.year === parseInt(w.year)
+            );
+            if (dupeIdx >= 0) {
+              updated[dupeIdx] = { ...updated[dupeIdx], quantity: updated[dupeIdx].quantity + (parseInt(w.quantity) || 1) };
+              merged++;
+            } else {
+              updated.push(w);
+              added++;
+            }
+          });
+          return updated;
+        });
+        const parts = [];
+        if (added > 0) parts.push(`${added} bouteille${added > 1 ? "s" : ""} ajoutée${added > 1 ? "s" : ""}`);
+        if (merged > 0) parts.push(`${merged} quantité${merged > 1 ? "s" : ""} mise${merged > 1 ? "s" : ""} à jour`);
+        showToast((parts.join(" · ") || "Cave mise à jour") + " ✓");
       }} />}
       <Toast toast={toast} onDismiss={() => setToast(null)} />
       {showEdit && selected && <EditModal wine={selected} onSave={updateWine} onClose={() => setShowEdit(false)} />}
@@ -1396,7 +1500,7 @@ Instructions :
                     </div>
                   ))}
                   <select style={inp} value={newWine.type} onChange={e => setNewWine(p => ({ ...p, type: e.target.value }))}>
-                    {["Rouge","Blanc","Rosé","Champagne","Liquoreux"].map(t => <option key={t}>{t}</option>)}
+                    {ALL_TYPES.map(t => <option key={t}>{t}</option>)}
                   </select>
                   <div>
                     <input style={{ ...inp, borderColor: formErrors.quantity ? "#C0392B" : "#DDD8D0" }} placeholder="Quantité" type="number" min="1" value={newWine.quantity} onChange={e => setNewWine(p => ({ ...p, quantity: e.target.value }))} />
@@ -1428,7 +1532,10 @@ Instructions :
                   style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s", marginBottom: 8 }}
                   onClick={() => getBottleAdvice(wine)}>
                   <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                    <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: tc.color, flexShrink: 0, marginTop: 2 }} />
+                    {wine.labelPhoto
+                      ? <img src={wine.labelPhoto} alt="" style={{ width: 38, height: 54, objectFit: "cover", borderRadius: 4, flexShrink: 0, border: "1px solid #EAE5DF" }} />
+                      : <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: tc.color, flexShrink: 0, marginTop: 2 }} />
+                    }
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "3px 10px", marginBottom: 4 }}>
                         <span style={{ fontSize: 18, fontWeight: 600 }}>{wine.name}</span>
@@ -1468,6 +1575,25 @@ Instructions :
             <div className="fade-in">
               <button style={{ ...btnG, marginBottom: 16 }} onClick={() => setView("cellar")}>← Retour à la cave</button>
               <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "20px 22px", marginBottom: 16 }}>
+                {/* Label photo */}
+                {selected.labelPhoto ? (
+                  <div style={{ position: "relative", marginBottom: 16, display: "flex", justifyContent: "center" }}>
+                    <img src={selected.labelPhoto} alt="étiquette"
+                      style={{ maxHeight: 220, maxWidth: "100%", borderRadius: 8, objectFit: "contain", border: "1px solid #EAE5DF", display: "block" }} />
+                    <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6 }}>
+                      <label title="Changer la photo" style={{ background: "rgba(0,0,0,0.45)", borderRadius: 6, padding: "4px 8px", cursor: "pointer", color: "#fff", fontSize: 13, lineHeight: 1.2 }}>
+                        ✏️ <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { if (e.target.files[0]) uploadLabelPhoto(e.target.files[0], selected); e.target.value = ""; }} />
+                      </label>
+                      <button title="Supprimer la photo" onClick={() => updateWine({ ...selected, labelPhoto: undefined })}
+                        style={{ background: "rgba(0,0,0,0.45)", border: "none", borderRadius: 6, padding: "4px 8px", cursor: "pointer", color: "#fff", fontSize: 13, lineHeight: 1.2 }}>✕</button>
+                    </div>
+                  </div>
+                ) : (
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#FAF7F3", border: "1.5px dashed #DDD8D0", borderRadius: 8, padding: "7px 14px", cursor: "pointer", color: "#9A8A7A", fontSize: 13, fontStyle: "italic", marginBottom: 14 }}>
+                    📷 Ajouter une photo de l'étiquette
+                    <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => { if (e.target.files[0]) uploadLabelPhoto(e.target.files[0], selected); e.target.value = ""; }} />
+                  </label>
+                )}
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
