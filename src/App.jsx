@@ -528,7 +528,7 @@ function DrinkingWindowTimeline({ wine }) {
   );
 }
 
-function VintageChart({ years, byYear }) {
+function VintageChart({ years, byYear, onYearClick, activeYear }) {
   const [hov, setHov] = useState(null);
   if (!years.length) return <div style={{ color: "#B0A090", fontSize: 14, fontStyle: "italic" }}>Aucun millésime enregistré.</div>;
   const maxQty = Math.max(...years.map(y => byYear[y]), 1);
@@ -537,26 +537,30 @@ function VintageChart({ years, byYear }) {
   const short = years.length > 12;
   return (
     <div style={{ overflowX: "auto" }}>
+      {onYearClick && <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: 12, color: "#9A8A7A", fontStyle: "italic", marginBottom: 6 }}>Cliquez sur un millésime pour filtrer la cave</div>}
       <svg viewBox={`-4 0 ${W + 8} ${CH + 28}`} style={{ display: "block", width: "100%", minWidth: Math.min(W, 160) }}>
         {years.map((yr, i) => {
           const qty = byYear[yr];
           const bH = Math.max(4, Math.round(qty / maxQty * CH));
           const x = i * (BAR + GAP);
           const isHov = hov === yr;
+          const isActive = activeYear === yr;
           const midX = x + BAR / 2;
           return (
-            <g key={yr} style={{ cursor: "default" }}
-               onMouseEnter={() => setHov(yr)} onMouseLeave={() => setHov(null)}>
+            <g key={yr} style={{ cursor: onYearClick ? "pointer" : "default" }}
+               onMouseEnter={() => setHov(yr)} onMouseLeave={() => setHov(null)}
+               onClick={() => onYearClick && onYearClick(yr)}>
               <rect x={x} y={CH - bH} width={BAR} height={bH} rx={3}
-                fill={isHov ? "#8B2635" : "#C5A090"} style={{ transition: "fill 0.15s" }} />
-              {isHov && (
+                fill={isActive ? "#8B2635" : isHov ? "#A03040" : "#C5A090"} style={{ transition: "fill 0.15s" }} />
+              {isActive && <rect x={x - 1} y={CH - bH - 1} width={BAR + 2} height={bH + 2} rx={4} fill="none" stroke="#8B2635" strokeWidth={1.5} />}
+              {(isHov || isActive) && (
                 <g>
                   <rect x={midX - 20} y={CH - bH - 22} width={40} height={17} rx={4} fill="#8B2635" />
                   <text x={midX} y={CH - bH - 9} textAnchor="middle" fontSize={10} fill="#fff" fontWeight="600">{qty} btl</text>
                 </g>
               )}
               <text x={midX} y={CH + 18} textAnchor="middle" fontSize={9}
-                fill={isHov ? "#8B2635" : "#9A8A7A"} fontWeight={isHov ? "600" : "400"}>
+                fill={isActive ? "#8B2635" : isHov ? "#8B2635" : "#9A8A7A"} fontWeight={isHov || isActive ? "600" : "400"}>
                 {short ? `'${String(yr).slice(2)}` : yr}
               </text>
             </g>
@@ -567,7 +571,7 @@ function VintageChart({ years, byYear }) {
   );
 }
 
-function StatsDashboard({ cellar }) {
+function StatsDashboard({ cellar, onYearClick, activeYear }) {
   const totalBottles = cellar.reduce((s, w) => s + w.quantity, 0);
   const byType = {};
   cellar.forEach(w => { byType[w.type] = (byType[w.type] || 0) + w.quantity; });
@@ -697,7 +701,7 @@ function StatsDashboard({ cellar }) {
       {/* Vintage distribution bar chart */}
       <div style={{ ...card, marginBottom: 12 }}>
         <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>MILLÉSIMES</div>
-        <VintageChart years={sortedYears} byYear={byYear} />
+        <VintageChart years={sortedYears} byYear={byYear} onYearClick={onYearClick} activeYear={activeYear} />
       </div>
 
       {/* Region bars with value */}
@@ -1200,9 +1204,14 @@ export default function WineCellar() {
   const [fAppellation, setFAppellation] = useState("Tous");
   const [fStatus, setFStatus] = useState("Tous");
   const [fDecade, setFDecade] = useState(null);
+  const [fYear, setFYear] = useState(null);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("default");
   const [drinkTonight, setDrinkTonight] = useState(false);
+  const [cardView, setCardView] = useState(() => localStorage.getItem("ma_cave_view") || "list");
+  const [isDark, setIsDark] = useState(() => {
+    try { return localStorage.getItem("ma_cave_dark") === "1"; } catch { return false; }
+  });
 
   const [newWine, setNewWine] = useState({ name: "", year: "", region: "", appellation: "", type: "Rouge", grape: "", quantity: 1, drinkFrom: "", drinkUntil: "", notes: "", pricePaid: "" });
   const [wishlist, setWishlist] = useState(() => loadWishlist());
@@ -1270,6 +1279,17 @@ export default function WineCellar() {
 
   useEffect(() => { saveWishlist(wishlist); }, [wishlist]);
 
+  // Dark mode — sync to DOM data-attribute so CSS variables can react
+  useEffect(() => {
+    document.documentElement.dataset.dark = isDark ? "1" : "";
+    try { localStorage.setItem("ma_cave_dark", isDark ? "1" : "0"); } catch {}
+  }, [isDark]);
+
+  // Card view preference — persist
+  useEffect(() => {
+    try { localStorage.setItem("ma_cave_view", cardView); } catch {}
+  }, [cardView]);
+
   function showToast(message, undo) {
     setToast({ message, undo });
   }
@@ -1314,6 +1334,7 @@ export default function WineCellar() {
       if (fRegion !== "Tous" && w.region !== fRegion) return false;
       if (fAppellation !== "Tous" && w.appellation !== fAppellation) return false;
       if (fDecade !== null && (w.year < fDecade || w.year >= fDecade + 10)) return false;
+      if (fYear !== null && w.year !== fYear) return false;
       if (drinkTonight) {
         if (!["Apogée", "À boire vite"].includes(drinkingStatus(w).label)) return false;
       } else if (fStatus !== "Tous" && drinkingStatus(w).label !== fStatus) return false;
@@ -1342,7 +1363,8 @@ export default function WineCellar() {
   const activeFilters = [fType, fRegion, fAppellation, fStatus].filter(f => f !== "Tous").length
     + (drinkTonight ? 1 : 0)
     + (search.trim() ? 1 : 0)
-    + (fDecade !== null ? 1 : 0);
+    + (fDecade !== null ? 1 : 0)
+    + (fYear !== null ? 1 : 0);
 
   async function getBottleAdvice(wine) {
     setSelected(wine);
@@ -1589,18 +1611,39 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
   const btnG = { background: "#fff", color: "#7A6A5A", border: "1.5px solid #DDD8D0", borderRadius: 7, padding: "9px 16px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 1, transition: "all 0.15s" };
 
   return (
-    <div style={{ fontFamily: "'Cormorant Garamond','Georgia',serif", minHeight: "100vh", background: "#F8F5F1", color: "#2A1F15", display: "flex", flexDirection: "column" }}>
+    <div style={{ fontFamily: "'Cormorant Garamond','Georgia',serif", minHeight: "100vh", background: "var(--bg-page)", color: "var(--text)", display: "flex", flexDirection: "column" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Cinzel:wght@400;600&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
-        ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:#F8F5F1}::-webkit-scrollbar-thumb{background:#D5CFC8;border-radius:3px}
+        /* ── Light theme variables ── */
+        :root{
+          --bg-page:#F8F5F1;--bg-card:#fff;--bg-input:#FDFBF8;--bg-subtle:#FAF7F3;--bg-header:#fff;
+          --border:#EAE5DF;--border-light:#F0EBE5;
+          --text:#2A1F15;--text2:#9A8A7A;--text3:#B0A090;--text4:#4A3A2A;
+        }
+        /* ── Dark theme variables ── */
+        [data-dark="1"]{
+          --bg-page:#161008;--bg-card:#231A12;--bg-input:#2A1E14;--bg-subtle:#1E160E;--bg-header:#1A1008;
+          --border:#3A2E22;--border-light:#2E2418;
+          --text:#F0E8E0;--text2:#8A7A6A;--text3:#5A4A3A;--text4:#C8B8A8;
+        }
+        ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:var(--bg-page)}::-webkit-scrollbar-thumb{background:#D5CFC8;border-radius:3px}
         .wcard:hover{border-color:#C5A090!important;box-shadow:0 3px 16px rgba(139,38,53,0.10)!important;transform:translateY(-1px)}
         .fade-in{animation:fadeIn .3s ease}
         @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         @media(max-width:560px){.hide-sm{display:none!important}.grid2{grid-template-columns:1fr!important}.grid3{grid-template-columns:1fr 1fr!important}}
         @media(max-width:600px){.top-nav{display:none!important}main{padding-bottom:76px!important}.bottom-nav{display:flex!important}}
-        .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #EAE5DF;z-index:200;justify-content:space-around;align-items:stretch;padding-bottom:env(safe-area-inset-bottom,0px)}
+        .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--bg-header);border-top:1px solid var(--border);z-index:200;justify-content:space-around;align-items:stretch;padding-bottom:env(safe-area-inset-bottom,0px)}
         a{color:inherit}
+        /* ── Grid card view ── */
+        .wine-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+        .wine-grid .wcard{padding:0!important;overflow:hidden;display:flex!important;flex-direction:column!important;cursor:pointer}
+        .wine-grid .wcard:hover{transform:translateY(-2px)}
+        /* ── Dark mode overrides for surfaces ── */
+        [data-dark="1"] header,[data-dark="1"] .bottom-nav,[data-dark="1"] footer{background:var(--bg-header)!important;border-color:var(--border)!important}
+        [data-dark="1"] input,[data-dark="1"] select,[data-dark="1"] textarea{background:var(--bg-input)!important;color:var(--text)!important;border-color:var(--border)!important}
+        [data-dark="1"] .wcard{background:var(--bg-card)!important;border-color:var(--border)!important}
+        [data-dark="1"] .top-nav button{color:var(--text2)!important}
         @media print{.no-print,.bottom-nav,footer{display:none!important}.top-nav{display:none!important}header{position:relative!important}main{padding:8px!important;max-width:100%!important}body,#root>div{background:#fff!important}.wcard{break-inside:avoid;box-shadow:none!important}@page{margin:1.5cm;size:A4 portrait}}
       `}</style>
 
@@ -1658,15 +1701,30 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
       )}
 
       {/* HEADER */}
-      <header style={{ background: "#fff", borderBottom: "1px solid #EAE5DF", position: "sticky", top: 0, zIndex: 100 }}>
+      <header style={{ background: "var(--bg-header)", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, zIndex: 100 }}>
         <div style={{ maxWidth: 840, margin: "0 auto", padding: "0 20px" }}>
           <div style={{ padding: "16px 0 10px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
             <div>
               <div style={{ fontFamily: "'Cinzel',serif", fontSize: 22, fontWeight: 600, letterSpacing: 3, color: "#8B2635" }}>🍷 MA CAVE</div>
-              <div style={{ fontSize: 13, color: "#9A8A7A", fontStyle: "italic", marginTop: 2 }}>{totalBottles} bouteilles · {readyNow} à l'apogée</div>
+              <div style={{ fontSize: 13, color: "var(--text2)", fontStyle: "italic", marginTop: 2 }}>{totalBottles} bouteilles · {readyNow} à l'apogée</div>
+            </div>
+            {/* Dark mode + grid view toggles */}
+            <div style={{ display: "flex", gap: 6 }}>
+              {view === "cellar" && cellar.length > 0 && (
+                <button onClick={() => setCardView(v => v === "list" ? "grid" : "list")}
+                  title={cardView === "list" ? "Vue galerie" : "Vue liste"}
+                  style={{ background: "none", border: `1.5px solid var(--border)`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", color: "var(--text2)", fontSize: 16, lineHeight: 1, transition: "all 0.15s" }}>
+                  {cardView === "list" ? "⊞" : "☰"}
+                </button>
+              )}
+              <button onClick={() => setIsDark(d => !d)}
+                title={isDark ? "Mode clair" : "Mode sombre"}
+                style={{ background: "none", border: `1.5px solid var(--border)`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontSize: 16, lineHeight: 1, transition: "all 0.15s" }}>
+                {isDark ? "☀️" : "🌙"}
+              </button>
             </div>
           </div>
-          <nav className="top-nav" style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
+          <nav className="top-nav" style={{ display: "flex", borderTop: "1px solid var(--border-light)" }}>
             {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"],["wishlist","Liste d'achat"],["journal","Journal"]].map(([v, label]) => {
               const active = view === v || (view === "bottle" && v === "cellar");
               const badge = v === "cellar" && urgentCount > 0 ? urgentCount : (v === "journal" && journalEntries.length > 0 ? journalEntries.length : null);
@@ -1773,10 +1831,16 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                   <option value="quantity">Quantité ↓</option>
                   <option value="maturity">Maturité</option>
                 </select>
+                {fYear !== null && (
+                  <button onClick={() => setFYear(null)}
+                    style={{ background: "#FDF0F0", border: "1.5px solid #8B2635", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, color: "#8B2635", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}>
+                    📅 {fYear} ✕
+                  </button>
+                )}
                 {activeFilters > 0 && (
                   <button
                     style={{ ...btnG, color: "#8B2635", borderColor: "#C5A090", fontSize: 11 }}
-                    onClick={() => { setFType("Tous"); setFRegion("Tous"); setFAppellation("Tous"); setFStatus("Tous"); setDrinkTonight(false); setSearch(""); setSortBy("default"); setFDecade(null); }}>
+                    onClick={() => { setFType("Tous"); setFRegion("Tous"); setFAppellation("Tous"); setFStatus("Tous"); setDrinkTonight(false); setSearch(""); setSortBy("default"); setFDecade(null); setFYear(null); }}>
                     ✕ Tout effacer ({activeFilters})
                   </button>
                 )}
@@ -1848,7 +1912,9 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                 </div>
               )}
             </div>
-            <StatsDashboard cellar={cellar} />
+            <StatsDashboard cellar={cellar}
+              activeYear={fYear}
+              onYearClick={yr => { setFYear(f => f === yr ? null : yr); setFDecade(null); setView("cellar"); }} />
           </div>
         )}
 
@@ -1967,43 +2033,74 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                 </div>
               </div>
             ) : filtered.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "48px 20px", color: "#9A8A7A", fontStyle: "italic" }}>Aucun vin ne correspond à ces filtres.</div>
+              <div style={{ textAlign: "center", padding: "48px 20px", color: "var(--text2)", fontStyle: "italic" }}>Aucun vin ne correspond à ces filtres.</div>
+            ) : cardView === "grid" ? (
+              /* ── GRID / GALLERY VIEW ── */
+              <div className="wine-grid">
+                {filtered.map(wine => {
+                  const st = drinkingStatus(wine);
+                  const tc = TYPE_CONFIG[wine.type] || TYPE_CONFIG.Rouge;
+                  return (
+                    <div key={wine.id} className="wcard"
+                      style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, cursor: "pointer", transition: "all 0.15s", overflow: "hidden" }}
+                      onClick={() => getBottleAdvice(wine)}>
+                      {/* Photo or colour header */}
+                      {wine.labelPhoto
+                        ? <img src={wine.labelPhoto} alt="" style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }} />
+                        : <div style={{ width: "100%", height: 130, background: `linear-gradient(160deg, ${tc.color}22, ${tc.color}55)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>🍷</div>
+                      }
+                      {/* Maturity strip */}
+                      <div style={{ height: 3, background: st.color }} />
+                      <div style={{ padding: "10px 12px 12px" }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)", marginBottom: 2 }}>{wine.name}</div>
+                        <div style={{ fontSize: 12, color: "var(--text2)", marginBottom: 6 }}>{wine.year} · {wine.region}</div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ display: "inline-block", padding: "1px 7px", borderRadius: 20, fontSize: 10, fontFamily: "'Cinzel',serif", background: tc.pill, color: tc.color }}>{wine.type}</span>
+                          <span style={{ fontSize: 12, color: "var(--text2)" }}>{wine.quantity} btl</span>
+                        </div>
+                        {wine.rating && <div style={{ fontSize: 11, color: "#D4820A", fontWeight: 600, marginTop: 4 }}>⭐ {wine.rating}/100</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             ) : filtered.map(wine => {
+              /* ── LIST VIEW ── */
               const st = drinkingStatus(wine);
               const tc = TYPE_CONFIG[wine.type] || TYPE_CONFIG.Rouge;
               const range = wine.drinkUntil - wine.drinkFrom;
               const progress = range > 0 ? Math.max(0, Math.min(1, (CY - wine.drinkFrom) / range)) : 0;
               return (
                 <div key={wine.id} className="wcard"
-                  style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s", marginBottom: 8 }}
+                  style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s", marginBottom: 8 }}
                   onClick={() => getBottleAdvice(wine)}>
                   <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                     {wine.labelPhoto
-                      ? <img src={wine.labelPhoto} alt="" style={{ width: 38, height: 54, objectFit: "cover", borderRadius: 4, flexShrink: 0, border: "1px solid #EAE5DF" }} />
+                      ? <img src={wine.labelPhoto} alt="" style={{ width: 38, height: 54, objectFit: "cover", borderRadius: 4, flexShrink: 0, border: "1px solid var(--border)" }} />
                       : <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: tc.color, flexShrink: 0, marginTop: 2 }} />
                     }
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "3px 10px", marginBottom: 4 }}>
                         <span style={{ fontSize: 18, fontWeight: 600 }}>{wine.name}</span>
-                        <span style={{ color: "#8A7A6A", fontSize: 15, fontStyle: "italic" }}>{wine.year}</span>
+                        <span style={{ color: "var(--text2)", fontSize: 15, fontStyle: "italic" }}>{wine.year}</span>
                         <span className="hide-sm" style={{ display: "inline-block", padding: "2px 9px", borderRadius: 20, fontSize: 11, fontFamily: "'Cinzel',serif", background: tc.pill, color: tc.color }}>{wine.type}</span>
                       </div>
-                      <div style={{ color: "#9A8A7A", fontSize: 14, marginBottom: 8 }}>
+                      <div style={{ color: "var(--text2)", fontSize: 14, marginBottom: 8 }}>
                         {wine.appellation && <>{wine.appellation} · </>}{wine.grape}
                       </div>
-                      <div style={{ height: 3, background: "#EAE5DF", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ height: 3, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
                         <div style={{ height: "100%", width: `${Math.max(4, progress * 100)}%`, background: tc.color, borderRadius: 2, transition: "width 0.4s" }} />
                       </div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                        <span style={{ fontSize: 12, color: "#B0A090" }}>{wine.drinkFrom} – {wine.drinkUntil}</span>
-                        {wine.notes && <span className="hide-sm" style={{ fontSize: 12, color: "#B0A090", fontStyle: "italic" }}>{wine.notes}</span>}
+                        <span style={{ fontSize: 12, color: "var(--text3)" }}>{wine.drinkFrom} – {wine.drinkUntil}</span>
+                        {wine.notes && <span className="hide-sm" style={{ fontSize: 12, color: "var(--text3)", fontStyle: "italic" }}>{wine.notes}</span>}
                       </div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 20, fontSize: 12, background: st.bg, color: st.color, fontFamily: "'Cinzel',serif", letterSpacing: 0.5, whiteSpace: "nowrap" }}>
                         {st.icon} {st.label}
                       </span>
-                      <span style={{ fontSize: 13, color: "#9A8A7A" }}>{wine.quantity} btl</span>
+                      <span style={{ fontSize: 13, color: "var(--text2)" }}>{wine.quantity} btl</span>
                       {wine.rating && <span style={{ fontSize: 12, color: "#D4820A", fontWeight: 600 }}>{wine.rating}/100</span>}
                     </div>
                   </div>
@@ -2487,7 +2584,7 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
         })}
       </nav>
 
-      <footer style={{ textAlign: "center", padding: "14px", borderTop: "1px solid #EAE5DF", color: "#C0B0A0", fontSize: 12, fontStyle: "italic", background: "#fff" }}>
+      <footer style={{ textAlign: "center", padding: "14px", borderTop: "1px solid var(--border)", color: "var(--text3)", fontSize: 12, fontStyle: "italic", background: "var(--bg-header)" }}>
         In vino veritas · Sommelier propulsé par Gemini
       </footer>
     </div>
