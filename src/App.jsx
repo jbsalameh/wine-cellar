@@ -374,6 +374,92 @@ function estimateValue(wine) {
   return Math.round(base * rm * tm) * wine.quantity;
 }
 
+// ── Drinking Window Timeline ──────────────────────────────────────────────────
+function DrinkingWindowTimeline({ wine }) {
+  const { drinkFrom, drinkUntil, year } = wine;
+  if (!drinkFrom || !drinkUntil || drinkUntil <= drinkFrom) return null;
+
+  // Display range: from vintage year (or drinkFrom-2) to drinkUntil+3
+  const start = Math.min(year || drinkFrom, drinkFrom - 2);
+  const end = drinkUntil + 3;
+  const span = end - start;
+
+  const pct = v => Math.max(0, Math.min(100, (v - start) / span * 100));
+  const fromPct  = pct(drinkFrom);
+  const untilPct = pct(drinkUntil);
+  const nowPct   = pct(CY);
+
+  // Zone colours
+  const zones = [
+    { from: fromPct, to: Math.min(fromPct + (untilPct - fromPct) * 0.35, untilPct), color: "#2E8B57", label: "Jeune" },
+    { from: fromPct + (untilPct - fromPct) * 0.35, to: fromPct + (untilPct - fromPct) * 0.70, color: "#D4820A", label: "Apogée" },
+    { from: fromPct + (untilPct - fromPct) * 0.70, to: untilPct, color: "#C0392B", label: "À boire" },
+  ];
+
+  const nowInWindow = CY >= drinkFrom && CY <= drinkUntil;
+  const nowPassed   = CY > drinkUntil;
+  const nowTooEarly = CY < drinkFrom;
+
+  const labelYear = y => (
+    <text x={`${pct(y)}%`} y={28} textAnchor="middle" fontSize={9} fill="#9A8A7A">{y}</text>
+  );
+
+  return (
+    <div style={{ margin: "14px 0 4px" }}>
+      <div style={{ fontFamily: "'Cinzel',serif", fontSize: 10, letterSpacing: 2, color: "#9A8A7A", marginBottom: 8 }}>
+        FENÊTRE DE DÉGUSTATION · {drinkFrom}–{drinkUntil}
+        {nowInWindow && <span style={{ marginLeft: 8, color: "#2E8B57", fontSize: 10 }}>● EN COURS</span>}
+        {nowTooEarly && <span style={{ marginLeft: 8, color: "#5B8DD9", fontSize: 10 }}>● TROP TÔT</span>}
+        {nowPassed   && <span style={{ marginLeft: 8, color: "#AAA",    fontSize: 10 }}>● PASSÉE</span>}
+      </div>
+      <svg viewBox="0 0 100 34" preserveAspectRatio="none" style={{ width: "100%", height: 34, display: "block", overflow: "visible" }}>
+        {/* Background track */}
+        <rect x="0" y="8" width="100" height="10" rx="5" fill="#F0EBE5" />
+        {/* Pre-window (grey) */}
+        <rect x="0" y="8" width={`${fromPct}`} height="10" rx="0" fill="#E0DBD5" />
+        {/* Drinking window zones */}
+        {zones.map((z, i) => (
+          <rect key={i}
+            x={`${z.from}`} y="8"
+            width={`${Math.max(0, z.to - z.from)}`} height="10"
+            fill={z.color} opacity="0.75"
+            rx={i === 0 ? "5 0 0 5" : i === zones.length - 1 ? "0 5 5 0" : "0"} />
+        ))}
+        {/* Post-window (grey) */}
+        <rect x={`${untilPct}`} y="8" width={`${100 - untilPct}`} height="10" fill="#E0DBD5" />
+        {/* Vintage year tick */}
+        {year && year >= start && year <= end && (
+          <g>
+            <line x1={`${pct(year)}`} y1="6" x2={`${pct(year)}`} y2="20" stroke="#9A8A7A" strokeWidth="0.8" strokeDasharray="2,1" />
+            <text x={`${pct(year)}`} y="5" textAnchor="middle" fontSize={7} fill="#9A8A7A">{year}</text>
+          </g>
+        )}
+        {/* drinkFrom label */}
+        <text x={`${fromPct}`} y="28" textAnchor="middle" fontSize={8} fill="#6A5A4A" fontWeight="600">{drinkFrom}</text>
+        {/* drinkUntil label */}
+        <text x={`${untilPct}`} y="28" textAnchor="middle" fontSize={8} fill="#6A5A4A" fontWeight="600">{drinkUntil}</text>
+        {/* Today marker */}
+        {CY >= start && CY <= end && (
+          <g>
+            <line x1={`${nowPct}`} y1="5" x2={`${nowPct}`} y2="21" stroke="#2A1F15" strokeWidth="1.5" />
+            <polygon points={`${nowPct - 2.5},3 ${nowPct + 2.5},3 ${nowPct},7`} fill="#2A1F15" />
+            <text x={`${nowPct}`} y="31" textAnchor="middle" fontSize={7.5} fill="#2A1F15" fontWeight="700">{CY}</text>
+          </g>
+        )}
+      </svg>
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 14, marginTop: 6, flexWrap: "wrap" }}>
+        {[["#2E8B57","Jeune"],["#D4820A","Apogée"],["#C0392B","À boire vite"]].map(([c, l]) => (
+          <div key={l} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#9A8A7A" }}>
+            <div style={{ width: 10, height: 10, borderRadius: 2, background: c, opacity: 0.8 }} />
+            {l}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function VintageChart({ years, byYear }) {
   const [hov, setHov] = useState(null);
   if (!years.length) return <div style={{ color: "#B0A090", fontSize: 14, fontStyle: "italic" }}>Aucun millésime enregistré.</div>;
@@ -1045,6 +1131,7 @@ export default function WineCellar() {
   const [fRegion, setFRegion] = useState("Tous");
   const [fAppellation, setFAppellation] = useState("Tous");
   const [fStatus, setFStatus] = useState("Tous");
+  const [fDecade, setFDecade] = useState(null);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("default");
   const [drinkTonight, setDrinkTonight] = useState(false);
@@ -1141,6 +1228,7 @@ export default function WineCellar() {
       if (fType !== "Tous" && w.type !== fType) return false;
       if (fRegion !== "Tous" && w.region !== fRegion) return false;
       if (fAppellation !== "Tous" && w.appellation !== fAppellation) return false;
+      if (fDecade !== null && (w.year < fDecade || w.year >= fDecade + 10)) return false;
       if (drinkTonight) {
         if (!["Apogée", "À boire vite"].includes(drinkingStatus(w).label)) return false;
       } else if (fStatus !== "Tous" && drinkingStatus(w).label !== fStatus) return false;
@@ -1167,7 +1255,8 @@ export default function WineCellar() {
   const urgentCount = cellar.filter(w => drinkingStatus(w).label === "À boire vite" && w.quantity > 0).length;
   const activeFilters = [fType, fRegion, fAppellation, fStatus].filter(f => f !== "Tous").length
     + (drinkTonight ? 1 : 0)
-    + (search.trim() ? 1 : 0);
+    + (search.trim() ? 1 : 0)
+    + (fDecade !== null ? 1 : 0);
 
   async function getBottleAdvice(wine) {
     setSelected(wine);
@@ -1566,6 +1655,18 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                   style={{ display: "flex", alignItems: "center", gap: 5, background: drinkTonight ? "#FDF0EE" : "#fff", border: `1.5px solid ${drinkTonight ? "#C0392B" : "#DDD8D0"}`, borderRadius: 8, padding: "8px 13px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, color: drinkTonight ? "#C0392B" : "#6A5A4A", whiteSpace: "nowrap", transition: "all 0.15s" }}>
                   🍷 Ce soir
                 </button>
+                {/* Decade quick-filter */}
+                {(() => {
+                  const decades = [...new Set(cellar.map(w => w.year ? Math.floor(w.year / 10) * 10 : null).filter(Boolean))].sort();
+                  if (decades.length < 2) return null;
+                  return decades.map(d => (
+                    <button key={d}
+                      onClick={() => setFDecade(fDecade === d ? null : d)}
+                      style={{ background: fDecade === d ? "#FDF0F0" : "#fff", border: `1.5px solid ${fDecade === d ? "#8B2635" : "#DDD8D0"}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 11, color: fDecade === d ? "#8B2635" : "#6A5A4A", whiteSpace: "nowrap", transition: "all 0.15s" }}>
+                      {d}s
+                    </button>
+                  ));
+                })()}
                 {/* Sort */}
                 <select
                   value={sortBy}
@@ -1582,7 +1683,7 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                 {activeFilters > 0 && (
                   <button
                     style={{ ...btnG, color: "#8B2635", borderColor: "#C5A090", fontSize: 11 }}
-                    onClick={() => { setFType("Tous"); setFRegion("Tous"); setFAppellation("Tous"); setFStatus("Tous"); setDrinkTonight(false); setSearch(""); setSortBy("default"); }}>
+                    onClick={() => { setFType("Tous"); setFRegion("Tous"); setFAppellation("Tous"); setFStatus("Tous"); setDrinkTonight(false); setSearch(""); setSortBy("default"); setFDecade(null); }}>
                     ✕ Tout effacer ({activeFilters})
                   </button>
                 )}
@@ -1824,10 +1925,11 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                   </div>
                 </div>
                 <hr style={{ border: "none", borderTop: "1px solid #EAE5DF", margin: "14px 0" }} />
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {/* Drinking window timeline */}
+                <DrinkingWindowTimeline wine={selected} />
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 14 }}>
                   {[
                     [st.bg, st.color, `${st.icon} ${st.label}`, false],
-                    ["#FAF5F0", "#6A5A4A", `📅 ${selected.drinkFrom}–${selected.drinkUntil}`, false],
                     ...(selected.rating ? [["#FDF8EE", "#D4820A", `⭐ ${selected.rating}/100`, true]] : []),
                     ...(selected.pricePaid ? [["#F0F5FD", "#3A5A9A", `💸 ${parseFloat(selected.pricePaid).toLocaleString("fr-FR")} €/btl`, false]] : []),
                   ].map(([bg, color, text, bold], i) => (
@@ -1891,6 +1993,52 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
                 <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#5B8DD9", display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>🔍 RECHERCHER CE VIN</div>
                 <LabelSearch wine={selected} />
               </div>
+
+              {/* Similar wines in cellar */}
+              {(() => {
+                const similar = cellar.filter(w =>
+                  w.id !== selected.id && w.quantity > 0 &&
+                  (w.type === selected.type || w.region === selected.region)
+                ).sort((a, b) => {
+                  // Prefer same type AND same region first
+                  const scoreA = (a.type === selected.type ? 1 : 0) + (a.region === selected.region ? 1 : 0);
+                  const scoreB = (b.type === selected.type ? 1 : 0) + (b.region === selected.region ? 1 : 0);
+                  return scoreB - scoreA;
+                }).slice(0, 4);
+                if (!similar.length) return null;
+                return (
+                  <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "20px 22px", marginBottom: 16 }}>
+                    <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 14 }}>
+                      🍾 AUTRES VINS SIMILAIRES
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {similar.map(w => {
+                        const tc2 = TYPE_CONFIG[w.type] || TYPE_CONFIG.Rouge;
+                        const st2 = drinkingStatus(w);
+                        return (
+                          <div key={w.id}
+                            onClick={() => getBottleAdvice(w)}
+                            className="wcard"
+                            style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", border: "1px solid #EAE5DF", borderRadius: 8, cursor: "pointer", transition: "all 0.15s" }}>
+                            {w.labelPhoto
+                              ? <img src={w.labelPhoto} alt="" style={{ width: 30, height: 42, objectFit: "cover", borderRadius: 3, flexShrink: 0, border: "1px solid #EAE5DF" }} />
+                              : <div style={{ width: 4, alignSelf: "stretch", borderRadius: 2, background: tc2.color, flexShrink: 0 }} />
+                            }
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 15, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.name}</div>
+                              <div style={{ fontSize: 13, color: "#9A8A7A" }}>{w.year} · {w.region}</div>
+                            </div>
+                            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                              <span style={{ display: "inline-block", padding: "1px 8px", borderRadius: 20, fontSize: 10, fontFamily: "'Cinzel',serif", background: tc2.pill, color: tc2.color }}>{w.type}</span>
+                              <span style={{ fontSize: 11, color: st2.color }}>{st2.icon} {st2.label}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "20px 22px" }}>
                 <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
