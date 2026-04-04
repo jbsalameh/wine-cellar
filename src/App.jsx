@@ -567,6 +567,40 @@ function StatsDashboard({ cellar }) {
         })}
       </div>
 
+      {/* Grape variety breakdown */}
+      {(() => {
+        const byGrape = {};
+        cellar.forEach(w => {
+          if (!w.grape) return;
+          // Split blends like "Cabernet Sauvignon / Merlot" and count each grape
+          w.grape.split(/[/,+&]/).map(g => g.trim()).filter(Boolean).forEach(g => {
+            byGrape[g] = (byGrape[g] || 0) + w.quantity;
+          });
+        });
+        const grapesSorted = Object.entries(byGrape).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        if (!grapesSorted.length) return null;
+        const maxGrape = grapesSorted[0][1];
+        return (
+          <div style={{ ...card, marginBottom: 12 }}>
+            <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#9A8A7A", marginBottom: 12 }}>CÉPAGES</div>
+            {grapesSorted.map(([grape, qty]) => {
+              const pct = Math.round(qty / maxGrape * 100);
+              return (
+                <div key={grape} style={{ marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 14, color: "#4A3A2A", fontFamily: "'Cormorant Garamond',serif" }}>{grape}</span>
+                    <span style={{ fontSize: 13, color: "#9A8A7A" }}>{qty} btl</span>
+                  </div>
+                  <div style={{ height: 6, background: "#F0EBE5", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pct}%`, background: "linear-gradient(90deg,#5B8DD9,#A0C0F0)", borderRadius: 3, transition: "width 0.6s ease" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+
       {/* Top 5 wines by rating */}
       {top5.length > 0 && (
         <div style={card}>
@@ -1025,6 +1059,10 @@ export default function WineCellar() {
   const [pairingLoading, setPairingLoading] = useState(false);
   const [pairingError, setPairingError] = useState("");
 
+  const [analysisText, setAnalysisText] = useState("");
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
+
   const [toast, setToast] = useState(null);
   const [adviceCache, setAdviceCache] = useState({});
   const [tonightLoading, setTonightLoading] = useState(false);
@@ -1126,6 +1164,7 @@ export default function WineCellar() {
 
   const totalBottles = cellar.reduce((s, w) => s + w.quantity, 0);
   const readyNow = cellar.filter(w => ["Apogée", "À boire vite"].includes(drinkingStatus(w).label)).length;
+  const urgentCount = cellar.filter(w => drinkingStatus(w).label === "À boire vite" && w.quantity > 0).length;
   const activeFilters = [fType, fRegion, fAppellation, fStatus].filter(f => f !== "Tous").length
     + (drinkTonight ? 1 : 0)
     + (search.trim() ? 1 : 0);
@@ -1304,6 +1343,46 @@ Instructions :
     showToast(`"${item.name}" ajouté à la cave ✓`);
   }
 
+  async function getCellarAnalysis() {
+    setAnalysisText(""); setAnalysisError(""); setAnalysisLoading(true);
+    try {
+      const byType = {};
+      const byRegion = {};
+      cellar.forEach(w => {
+        byType[w.type] = (byType[w.type] || 0) + w.quantity;
+        byRegion[w.region] = (byRegion[w.region] || 0) + w.quantity;
+      });
+      const urgent = cellar.filter(w => drinkingStatus(w).label === "À boire vite").map(w => `${w.name} ${w.year}`).join(", ") || "aucune";
+      const totalQty = cellar.reduce((s, w) => s + w.quantity, 0);
+      const avgRating = (() => { const rated = cellar.filter(w => w.rating); return rated.length ? Math.round(rated.reduce((s, w) => s + w.rating, 0) / rated.length) : null; })();
+      const summary = [
+        `Cave : ${totalQty} bouteilles, ${cellar.length} références`,
+        `Types : ${Object.entries(byType).map(([t, q]) => `${t} ${q} btl`).join(", ")}`,
+        `Régions : ${Object.entries(byRegion).map(([r, q]) => `${r} ${q} btl`).join(", ")}`,
+        avgRating ? `Note moyenne : ${avgRating}/100` : null,
+        `À boire vite : ${urgent}`,
+      ].filter(Boolean).join("\n");
+
+      const text = await askGeminiStream(
+        SYS,
+        `Voici le contenu de ma cave à vin :
+${summary}
+
+Effectue une analyse complète de ma cave. Réponds en 4 sections avec exactement ces titres :
+BILAN : état général, forces et faiblesses de la collection
+URGENCES : bouteilles à ouvrir en priorité et pourquoi
+ÉQUILIBRE : diversité des types, régions et millésimes — ce qui manque
+RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement la cave (nom, appellation, millésime, budget indicatif)`,
+        (partial) => setAnalysisText(partial),
+        1800
+      );
+      setAnalysisText(text);
+    } catch (e) {
+      setAnalysisError(e.message || "Impossible de contacter le sommelier.");
+    }
+    setAnalysisLoading(false);
+  }
+
   function importWines(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -1408,10 +1487,12 @@ Instructions :
           <nav className="top-nav" style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
             {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"],["wishlist","Liste d'achat"]].map(([v, label]) => {
               const active = view === v || (view === "bottle" && v === "cellar");
+              const badge = v === "cellar" && urgentCount > 0 ? urgentCount : null;
               return (
                 <button key={v} onClick={() => setView(v)}
-                  style={{ background: "none", border: "none", borderBottom: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 18px", color: active ? "#8B2635" : "#8A7A6A", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, transition: "all 0.15s" }}>
+                  style={{ background: "none", border: "none", borderBottom: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 18px", color: active ? "#8B2635" : "#8A7A6A", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, transition: "all 0.15s", position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }}>
                   {label}
+                  {badge && <span style={{ background: "#C0392B", color: "#fff", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontFamily: "'Cinzel',serif", letterSpacing: 0, lineHeight: 1.5 }}>{badge}</span>}
                 </button>
               );
             })}
@@ -1514,7 +1595,68 @@ Instructions :
       <main style={{ flex: 1, padding: "20px", maxWidth: 840, width: "100%", margin: "0 auto" }}>
 
         {/* ── STATISTICS ──────────────────────────────────── */}
-        {view === "stats" && <StatsDashboard cellar={cellar} />}
+        {view === "stats" && (
+          <div className="fade-in">
+            {/* AI Cellar Analysis panel */}
+            <div style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "16px 20px", marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, color: "#8B2635" }}>🤖 ANALYSE DE MA CAVE</div>
+                  <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic", marginTop: 2 }}>Bilan, urgences, équilibre et recommandations d'achat par votre sommelier IA</div>
+                </div>
+                <button
+                  onClick={getCellarAnalysis}
+                  disabled={analysisLoading}
+                  style={{ background: "#8B2635", color: "#fff", border: "none", borderRadius: 7, padding: "10px 20px", cursor: "pointer", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 1.5, opacity: analysisLoading ? 0.7 : 1, whiteSpace: "nowrap" }}>
+                  {analysisLoading ? "…" : analysisText ? "Réanalyser" : "Analyser"}
+                </button>
+              </div>
+              {(analysisLoading || analysisText || analysisError) && (
+                <div style={{ marginTop: 14, borderTop: "1px solid #EAE5DF", paddingTop: 14 }}>
+                  {analysisError
+                    ? <div style={{ color: "#C0392B", fontSize: 14 }}>⚠️ {analysisError}</div>
+                    : analysisLoading && !analysisText
+                      ? <LoadingSkeleton message="Le sommelier analyse votre collection…" />
+                      : (() => {
+                          const ANALYSIS_SECTIONS = [
+                            { key: "bilan",  re: /BILAN\s*:/i,              icon: "📋", label: "BILAN" },
+                            { key: "urgent", re: /URGENCES?\s*:/i,          icon: "🔥", label: "URGENCES" },
+                            { key: "equil",  re: /[EÉ]QUILIBRE\s*:/i,      icon: "⚖️", label: "ÉQUILIBRE" },
+                            { key: "reco",   re: /RECOMMANDATIONS?\s*(D.ACHAT)?\s*:/i, icon: "🛒", label: "RECOMMANDATIONS D'ACHAT" },
+                          ];
+                          const parts = analysisText.split(/(?=(?:BILAN|URGENCES?|[EÉ]QUILIBRE|RECOMMANDATIONS?)[\s]*:)/i);
+                          const sections = {};
+                          for (const part of parts) {
+                            for (const { key, re } of ANALYSIS_SECTIONS) {
+                              if (re.test(part)) { sections[key] = part.replace(re, "").trim(); break; }
+                            }
+                          }
+                          const hasStructure = Object.keys(sections).length >= 2;
+                          if (!hasStructure) return (
+                            <div>
+                              <p style={{ lineHeight: 1.8, fontSize: 15, color: "#4A3A2A", whiteSpace: "pre-wrap", margin: 0 }}>{analysisText}</p>
+                              {analysisLoading && <span style={{ color: "#B0A090", fontSize: 13, fontStyle: "italic" }}> ✍️</span>}
+                            </div>
+                          );
+                          return (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                              {ANALYSIS_SECTIONS.map(({ key, icon, label }) => sections[key] ? (
+                                <div key={key} style={{ background: "#FAF7F3", borderRadius: 10, padding: "14px 16px", borderLeft: "3px solid #DDD8D0" }}>
+                                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 2, color: "#8B2635", marginBottom: 8 }}>{icon} {label}</div>
+                                  <p style={{ lineHeight: 1.8, fontSize: 15, color: "#4A3A2A", whiteSpace: "pre-wrap", margin: 0 }}>{sections[key]}</p>
+                                </div>
+                              ) : null)}
+                              {analysisLoading && <div style={{ color: "#B0A090", fontSize: 13, fontStyle: "italic" }}>✍️ Analyse en cours…</div>}
+                            </div>
+                          );
+                        })()
+                  }
+                </div>
+              )}
+            </div>
+            <StatsDashboard cellar={cellar} />
+          </div>
+        )}
 
         {/* ── CAVE ────────────────────────────────────────── */}
         {view === "cellar" && (
@@ -1917,10 +2059,14 @@ Instructions :
       <nav className="bottom-nav">
         {[["cellar","🍾","Cave"],["stats","📊","Stats"],["pairing","🍽️","Accords"],["wishlist","🛒","Liste"]].map(([v, icon, label]) => {
           const active = view === v || (view === "bottle" && v === "cellar");
+          const badge = v === "cellar" && urgentCount > 0 ? urgentCount : null;
           return (
             <button key={v} onClick={() => setView(v)}
-              style={{ flex: 1, background: "none", border: "none", borderTop: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: active ? "#8B2635" : "#8A7A6A", transition: "all 0.15s" }}>
-              <span style={{ fontSize: 22, lineHeight: 1 }}>{icon}</span>
+              style={{ flex: 1, background: "none", border: "none", borderTop: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: active ? "#8B2635" : "#8A7A6A", transition: "all 0.15s", position: "relative" }}>
+              <span style={{ fontSize: 22, lineHeight: 1, position: "relative", display: "inline-block" }}>
+                {icon}
+                {badge && <span style={{ position: "absolute", top: -4, right: -6, background: "#C0392B", color: "#fff", borderRadius: 10, padding: "1px 5px", fontSize: 9, fontFamily: "'Cinzel',serif", letterSpacing: 0, lineHeight: 1.5 }}>{badge}</span>}
+              </span>
               <span style={{ fontFamily: "'Cinzel',serif", fontSize: 9, letterSpacing: 1.5 }}>{label}</span>
             </button>
           );
