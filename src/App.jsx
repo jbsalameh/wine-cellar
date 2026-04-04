@@ -1227,6 +1227,8 @@ export default function WineCellar() {
   const [pendingConsume, setPendingConsume] = useState(null);
   const [shareMode, setShareMode] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [journalSearch, setJournalSearch] = useState("");
+  const [journalSort, setJournalSort] = useState("date_desc");
 
   // On mount: if localStorage was empty, check IndexedDB (survives iOS ITP better).
   // We must do this BEFORE the save effect runs so we don't overwrite real data
@@ -1336,6 +1338,7 @@ export default function WineCellar() {
   const totalBottles = cellar.reduce((s, w) => s + w.quantity, 0);
   const readyNow = cellar.filter(w => ["Apogée", "À boire vite"].includes(drinkingStatus(w).label)).length;
   const urgentCount = cellar.filter(w => drinkingStatus(w).label === "À boire vite" && w.quantity > 0).length;
+  const journalEntries = cellar.flatMap(w => (w.log || []).map(e => ({ ...e, wine: w }))).sort((a, b) => new Date(b.date) - new Date(a.date));
   const activeFilters = [fType, fRegion, fAppellation, fStatus].filter(f => f !== "Tous").length
     + (drinkTonight ? 1 : 0)
     + (search.trim() ? 1 : 0)
@@ -1664,9 +1667,9 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
             </div>
           </div>
           <nav className="top-nav" style={{ display: "flex", borderTop: "1px solid #F0EBE5" }}>
-            {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"],["wishlist","Liste d'achat"]].map(([v, label]) => {
+            {[["cellar","Cave"],["stats","Statistiques"],["pairing","Accords Mets-Vins"],["wishlist","Liste d'achat"],["journal","Journal"]].map(([v, label]) => {
               const active = view === v || (view === "bottle" && v === "cellar");
-              const badge = v === "cellar" && urgentCount > 0 ? urgentCount : null;
+              const badge = v === "cellar" && urgentCount > 0 ? urgentCount : (v === "journal" && journalEntries.length > 0 ? journalEntries.length : null);
               return (
                 <button key={v} onClick={() => setView(v)}
                   style={{ background: "none", border: "none", borderBottom: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 18px", color: active ? "#8B2635" : "#8A7A6A", fontFamily: "'Cinzel',serif", fontSize: 12, letterSpacing: 2, transition: "all 0.15s", position: "relative", display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -2333,13 +2336,144 @@ RECOMMANDATIONS D'ACHAT : 3 à 5 vins à acquérir pour compléter idéalement l
           </div>
         )}
 
+        {/* ── JOURNAL ──────────────────────────────────────── */}
+        {view === "journal" && (() => {
+          // Build flat list with search + sort applied
+          const q = norm(journalSearch.trim());
+          const entries = journalEntries
+            .filter(e => !q || norm(e.wine.name).includes(q) || norm(e.occasion || "").includes(q) || norm(e.note || "").includes(q))
+            .sort((a, b) => {
+              if (journalSort === "date_asc")  return new Date(a.date) - new Date(b.date);
+              if (journalSort === "rating")    return (b.rating || 0) - (a.rating || 0);
+              return new Date(b.date) - new Date(a.date); // date_desc default
+            });
+
+          // Group by year-month for timeline display
+          const groups = {};
+          entries.forEach(e => {
+            const d = new Date(e.date);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            const label = d.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+            if (!groups[key]) groups[key] = { label, entries: [] };
+            groups[key].entries.push(e);
+          });
+
+          const avgRating = (() => {
+            const rated = journalEntries.filter(e => e.rating);
+            return rated.length ? (rated.reduce((s, e) => s + e.rating, 0) / rated.length).toFixed(1) : null;
+          })();
+
+          return (
+            <div className="fade-in">
+              <div style={{ fontFamily: "'Cinzel',serif", fontSize: 13, letterSpacing: 3, color: "#8B2635", marginBottom: 4 }}>📖 JOURNAL DE DÉGUSTATION</div>
+              <p style={{ color: "#9A8A7A", fontStyle: "italic", fontSize: 15, marginBottom: 20, lineHeight: 1.6 }}>
+                L'ensemble de vos notes de dégustation, regroupées par date.
+              </p>
+
+              {journalEntries.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "48px 20px" }}>
+                  <div style={{ fontSize: 52, marginBottom: 14 }}>📝</div>
+                  <div style={{ fontFamily: "'Cinzel',serif", fontSize: 14, letterSpacing: 2, color: "#9A8A7A", marginBottom: 8 }}>AUCUNE DÉGUSTATION ENREGISTRÉE</div>
+                  <p style={{ color: "#B0A090", fontSize: 14, fontStyle: "italic" }}>
+                    Ouvrez une bouteille de votre cave et enregistrez vos impressions avec le bouton "−".
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Summary KPIs */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 20 }} className="grid3">
+                    {[
+                      ["🥂", journalEntries.length, "dégustations"],
+                      ["⭐", avgRating ? `${avgRating}/100` : "—", "note moy."],
+                      ["🍷", new Set(journalEntries.map(e => e.wine.id)).size, "vins goûtés"],
+                    ].map(([icon, val, lbl], i) => (
+                      <div key={i} style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "14px 16px", textAlign: "center" }}>
+                        <div style={{ fontSize: 22, marginBottom: 4 }}>{icon}</div>
+                        <div style={{ fontFamily: "'Cinzel',serif", fontSize: 22, fontWeight: 600, color: "#2A1F15" }}>{val}</div>
+                        <div style={{ color: "#9A8A7A", fontSize: 13, fontStyle: "italic" }}>{lbl}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Search + sort bar */}
+                  <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+                    <div style={{ flex: 1, position: "relative", minWidth: 180 }}>
+                      <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: "#B0A090", fontSize: 15, pointerEvents: "none" }}>🔍</span>
+                      <input
+                        style={{ boxSizing: "border-box", width: "100%", background: "#FDFBF8", border: "1.5px solid #DDD8D0", borderRadius: 8, padding: "8px 32px 8px 34px", fontFamily: "'Cormorant Garamond',serif", fontSize: 15, color: "#2A1F15", outline: "none" }}
+                        placeholder="Rechercher un vin, occasion, note…"
+                        value={journalSearch}
+                        onChange={e => setJournalSearch(e.target.value)}
+                      />
+                      {journalSearch && <button onClick={() => setJournalSearch("")} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#B0A090", fontSize: 16, lineHeight: 1 }}>✕</button>}
+                    </div>
+                    <select value={journalSort} onChange={e => setJournalSort(e.target.value)}
+                      style={{ background: "#fff", border: "1.5px solid #DDD8D0", borderRadius: 8, padding: "8px 12px", fontFamily: "'Cinzel',serif", fontSize: 11, color: "#6A5A4A", outline: "none", cursor: "pointer" }}>
+                      <option value="date_desc">Plus récent</option>
+                      <option value="date_asc">Plus ancien</option>
+                      <option value="rating">Meilleure note</option>
+                    </select>
+                  </div>
+
+                  {entries.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "32px 20px", color: "#9A8A7A", fontStyle: "italic" }}>Aucune dégustation ne correspond à cette recherche.</div>
+                  ) : (
+                    /* Timeline grouped by month */
+                    Object.entries(groups).map(([key, { label, entries: monthEntries }]) => (
+                      <div key={key} style={{ marginBottom: 24 }}>
+                        <div style={{ fontFamily: "'Cinzel',serif", fontSize: 11, letterSpacing: 3, color: "#8B2635", textTransform: "uppercase", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                          {label}
+                          <div style={{ flex: 1, height: 1, background: "#EAE5DF" }} />
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {monthEntries.map((entry, i) => {
+                            const tc = TYPE_CONFIG[entry.wine.type] || TYPE_CONFIG.Rouge;
+                            return (
+                              <div key={entry.id || i} style={{ background: "#fff", border: "1px solid #EAE5DF", borderRadius: 12, padding: "16px 18px" }}>
+                                {/* Wine header — clickable */}
+                                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: entry.note || entry.occasion ? 12 : 0, cursor: "pointer" }}
+                                  onClick={() => getBottleAdvice(entry.wine)}>
+                                  {entry.wine.labelPhoto
+                                    ? <img src={entry.wine.labelPhoto} alt="" style={{ width: 32, height: 46, objectFit: "cover", borderRadius: 4, flexShrink: 0, border: "1px solid #EAE5DF" }} />
+                                    : <div style={{ width: 4, height: 46, borderRadius: 2, background: tc.color, flexShrink: 0 }} />
+                                  }
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 16, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.wine.name} <span style={{ fontWeight: 400, color: "#8A7A6A", fontStyle: "italic" }}>{entry.wine.year}</span></div>
+                                    <div style={{ fontSize: 13, color: "#9A8A7A" }}>{entry.wine.region}{entry.wine.appellation ? ` · ${entry.wine.appellation}` : ""}</div>
+                                  </div>
+                                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                                    <span style={{ fontFamily: "'Cinzel',serif", fontSize: 11, color: "#9A8A7A", letterSpacing: 1 }}>
+                                      {new Date(entry.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}
+                                    </span>
+                                    {entry.rating && <span style={{ fontSize: 13, color: "#D4820A", fontWeight: 600 }}>⭐ {entry.rating}/100</span>}
+                                  </div>
+                                </div>
+                                {(entry.occasion || entry.note) && (
+                                  <div style={{ borderTop: "1px solid #F5F0EB", paddingTop: 10 }}>
+                                    {entry.occasion && <div style={{ fontSize: 14, color: "#8B2635", fontStyle: "italic", marginBottom: entry.note ? 6 : 0 }}>{entry.occasion}</div>}
+                                    {entry.note && <p style={{ fontSize: 15, color: "#4A3A2A", lineHeight: 1.7, margin: 0 }}>{entry.note}</p>}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
+
       </main>
 
       {/* ── MOBILE BOTTOM NAV ── */}
       <nav className="bottom-nav">
-        {[["cellar","🍾","Cave"],["stats","📊","Stats"],["pairing","🍽️","Accords"],["wishlist","🛒","Liste"]].map(([v, icon, label]) => {
+        {[["cellar","🍾","Cave"],["stats","📊","Stats"],["pairing","🍽️","Accords"],["wishlist","🛒","Liste"],["journal","📖","Journal"]].map(([v, icon, label]) => {
           const active = view === v || (view === "bottle" && v === "cellar");
-          const badge = v === "cellar" && urgentCount > 0 ? urgentCount : null;
+          const badge = v === "cellar" && urgentCount > 0 ? urgentCount : (v === "journal" && journalEntries.length > 0 ? journalEntries.length : null);
           return (
             <button key={v} onClick={() => setView(v)}
               style={{ flex: 1, background: "none", border: "none", borderTop: `2.5px solid ${active ? "#8B2635" : "transparent"}`, cursor: "pointer", padding: "10px 4px 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 3, color: active ? "#8B2635" : "#8A7A6A", transition: "all 0.15s", position: "relative" }}>
